@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import {
   X, Star, Phone, Globe, MapPin, Clock, ExternalLink,
   CheckCircle2, Circle, Tag, User, Building2, Mail,
@@ -5,21 +6,59 @@ import {
 } from "lucide-react";
 import { Lead } from "./LeadCard";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
 
-const ENRICHMENT_SOURCES = [
-  { icon: Globe, label: "Company Website", done: false },
-  { icon: Linkedin, label: "LinkedIn", done: false },
-  { icon: Instagram, label: "Instagram", done: false },
-  { icon: MapPin, label: "Google Maps", done: true },
-];
+const ENRICHMENT_SOURCE_MAP: Record<string, { icon: typeof Globe; label: string }> = {
+  WEBSITE: { icon: Globe, label: "Company Website" },
+  LINKEDIN: { icon: Linkedin, label: "LinkedIn" },
+  INSTAGRAM: { icon: Instagram, label: "Instagram" },
+  GOOGLE_MAPS: { icon: MapPin, label: "Google Maps" },
+};
 
 interface LeadDetailPanelProps {
   lead: Lead | null;
   onClose: () => void;
+  onLeadUpdated?: (lead: Lead) => void;
+  onSaveLead?: () => void;
+  onSkipLead?: () => void;
 }
 
-export const LeadDetailPanel = ({ lead, onClose }: LeadDetailPanelProps) => {
+export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSkipLead }: LeadDetailPanelProps) => {
+  const [fullLead, setFullLead] = useState<{
+    email?: string | null;
+    linkedin?: string | null;
+    instagram?: string | null;
+    contactPerson?: string | null;
+    designation?: string | null;
+    enrichmentSources?: { source: string; done: boolean }[];
+  } | null>(null);
+
+  useEffect(() => {
+    if (!lead?.id) return;
+    api.leads
+      .get(lead.id)
+      .then((l) =>
+        setFullLead({
+          email: l.email,
+          linkedin: l.linkedin,
+          instagram: l.instagram,
+          contactPerson: l.contactPerson,
+          designation: l.designation,
+          enrichmentSources: l.enrichmentSources,
+        })
+      )
+      .catch(() => setFullLead(null));
+  }, [lead?.id]);
+
   if (!lead) return null;
+
+  const apiEnrichment = new Map(
+    (fullLead?.enrichmentSources ?? []).map((s) => [s.source, s.done])
+  );
+  const enrichmentSources = Object.entries(ENRICHMENT_SOURCE_MAP).map(([key, val]) => ({
+    ...val,
+    done: apiEnrichment.get(key) ?? (key === "GOOGLE_MAPS"),
+  }));
 
   return (
     <>
@@ -82,7 +121,7 @@ export const LeadDetailPanel = ({ lead, onClose }: LeadDetailPanelProps) => {
               Enrichment Checklist (Step 6)
             </p>
             <div className="grid grid-cols-2 gap-2">
-              {ENRICHMENT_SOURCES.map((src) => {
+              {enrichmentSources.map((src) => {
                 const Icon = src.icon;
                 return (
                   <div
@@ -114,11 +153,11 @@ export const LeadDetailPanel = ({ lead, onClose }: LeadDetailPanelProps) => {
             </p>
             <div className="space-y-2.5">
               <DataField icon={Building2} label="Company Name" value={lead.name} filled />
-              <DataField icon={User} label="Contact Person" value="—" filled={false} />
-              <DataField icon={Tag} label="Designation / Title" value="—" filled={false} />
+              <DataField icon={User} label="Contact Person" value={fullLead?.contactPerson ?? "—"} filled={!!fullLead?.contactPerson} />
+              <DataField icon={Tag} label="Designation / Title" value={fullLead?.designation ?? "—"} filled={!!fullLead?.designation} />
               <DataField icon={Building2} label="Customer Type" value={lead.category} filled />
               <DataField icon={Phone} label="Phone Number" value={lead.phone || "—"} filled={!!lead.phone} />
-              <DataField icon={Mail} label="Email Address" value="—" filled={false} />
+              <DataField icon={Mail} label="Email Address" value={fullLead?.email ?? "—"} filled={!!fullLead?.email} />
               <DataField icon={MapPin} label="Full Address" value={lead.address} filled />
             </div>
           </div>
@@ -148,10 +187,16 @@ export const LeadDetailPanel = ({ lead, onClose }: LeadDetailPanelProps) => {
 
         {/* Footer actions */}
         <div className="p-4 border-t border-border bg-surface-1 flex gap-2">
-          <button className="flex-1 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-secondary transition-all font-medium">
+          <button
+            onClick={onSkipLead}
+            className="flex-1 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-secondary transition-all font-medium"
+          >
             Skip Lead
           </button>
-          <button className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]">
+          <button
+            onClick={onSaveLead}
+            className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]"
+          >
             Save to CRM
             <ArrowRight className="w-4 h-4" />
           </button>

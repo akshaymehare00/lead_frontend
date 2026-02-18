@@ -1,67 +1,129 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useToast } from "@/hooks/use-toast";
 import { Sidebar, ChatSession } from "@/components/leads/Sidebar";
+import { useAuth } from "@/context/AuthContext";
+import { ManageUsersSheet } from "@/components/auth/ManageUsersSheet";
 import { WorkflowStepper } from "@/components/leads/WorkflowStepper";
-import { SearchPanel } from "@/components/leads/SearchPanel";
+import { SearchPanel, type SearchParams } from "@/components/leads/SearchPanel";
 import { LeadCard, Lead } from "@/components/leads/LeadCard";
 import { LeadDetailPanel } from "@/components/leads/LeadDetailPanel";
 import { StatsBar } from "@/components/leads/StatsBar";
 import {
-  MapPin, Search, Shield, Download, X,
+  MapPin, Search, Shield, Download,
   ChevronDown, ChevronUp, Layers, Zap
 } from "lucide-react";
-
-const MOCK_SESSIONS: ChatSession[] = [
-  { id: "1", title: "Jewellery stores", time: "13 min ago", leadCount: 10 },
-  { id: "2", title: "Jewellery stores", time: "About 15 hrs ago", leadCount: 20 },
-  { id: "3", title: "Jewellery stores", time: "About 14 hrs ago", leadCount: 10 },
-  { id: "4", title: "Jewellery stores", time: "About 8 hrs ago", leadCount: 10 },
-  { id: "5", title: "Give me 20 Jewellery Mfr...", time: "About 7 hrs ago", leadCount: 20 },
-  { id: "6", title: "Jewellery stores", time: "About 1 hr ago", leadCount: 10 },
-];
-
-const MOCK_LEADS: Lead[] = [
-  { id: "l1", rank: 1, name: "Joyalukkas Jewellery - Pune", category: "Chain Store", rating: 4.7, address: "1258, A/2, Jangali Maharaj Rd, Deccan Gymkhana, Pune 411004", phone: "+91 20 2553 7979", website: "www.joyalukkas.in", hours: "Closed · Opens 10:30 AM", isNew: true },
-  { id: "l2", rank: 2, name: "Tanishq Jewellery - Pune - JM Road", category: "Chain Store", rating: 4.7, address: "Modern High School, 1318, opp. Jangali Maharaj Rd, Shivajinagar, Pune", phone: "+91 98231 96633", website: "stores.tanishq.co.in", hours: "Closed · Opens 10:30 AM", isNew: true },
-  { id: "l3", rank: 3, name: "BlueStone Jewellery - Phoenix Marketcity", category: "Retailer", rating: 4.9, address: "Phoenix Marketcity Mall, Hadapsar, Pune 411028", phone: "+91 80 6912 5555", website: "www.bluestone.com", hours: "Opens at 11:00 AM", isNew: true },
-  { id: "l4", rank: 4, name: "PNG Sons Aundh – P N Gadgil & Sons", category: "Retailer", rating: 4.8, address: "Aundh, Pune, Maharashtra 411007", phone: "+91 20 2588 9822", website: "www.pnggold.com", hours: "Closed · Opens 10:00 AM", isNew: false },
-  { id: "l5", rank: 5, name: "Kalyan Jewellers - Pune", category: "Chain Store", rating: 4.6, address: "FC Road, Shivajinagar, Pune 411005", phone: "+91 80 4666 0000", website: "www.kalyanjewellers.net", hours: "Closed · Opens 10:00 AM", isNew: true },
-  { id: "l6", rank: 6, name: "Malabar Gold & Diamonds", category: "Chain Store", rating: 4.5, address: "Kumar Pacific Mall, Swargate, Pune 411042", phone: "+91 80 4444 1111", website: "www.malabargold.com", hours: "Opens at 10:00 AM", isNew: false },
-];
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { api, toLead } from "@/lib/api";
 
 type ViewMode = "dashboard" | "results";
 
+const POLL_INTERVAL = 1500;
+
 export default function Index() {
-  const [sessions, setSessions] = useState<ChatSession[]>(MOCK_SESSIONS);
-  const [activeSessionId, setActiveSessionId] = useState("1");
+  const { user, isAdmin, logout } = useAuth();
+  const { toast } = useToast();
+  const [manageUsersOpen, setManageUsersOpen] = useState(false);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [isSearching, setIsSearching] = useState(false);
-  const [searchMeta, setSearchMeta] = useState<{ location: string; categories: string[]; count: number } | null>(null);
+  const [searchMeta, setSearchMeta] = useState<SearchParams | null>(null);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [currentStep, setCurrentStep] = useState(1);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const [searchOpen, setSearchOpen] = useState(true);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
-  const handleSearch = (params: { location: string; categories: string[]; count: number }) => {
+  // Fetch sessions
+  const fetchSessions = useCallback(async () => {
+    try {
+      const { sessions: list } = await api.sessions.list();
+      setSessions(
+        list.map((s) => ({
+          id: s.id,
+          title: s.title,
+          time: s.time,
+          leadCount: s.leadCount,
+        }))
+      );
+      return list;
+    } catch {
+      setSessions([]);
+      return [];
+    }
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+    fetchSessions().then((list) => {
+      if (mounted && list.length > 0 && !activeSessionId) {
+        setActiveSessionId(list[0].id);
+      }
+    });
+    return () => { mounted = false; };
+  }, [fetchSessions]);
+
+  // Load session leads when activeSessionId changes
+  useEffect(() => {
+    if (!activeSessionId) {
+      setLeads([]);
+      return;
+    }
+    api.sessions
+      .get(activeSessionId)
+      .then((session) => {
+        setLeads(session.leads.map(toLead));
+        setSearchMeta(
+          session.mode === "NATURAL"
+            ? { mode: "natural", query: session.title, count: session.leadCount }
+            : {
+                mode: "manual",
+                location: session.location ?? "",
+                categories: session.categories,
+                count: session.leadCount,
+              }
+        );
+        setViewMode("results");
+        setCurrentStep(3);
+      })
+      .catch(() => setLeads([]));
+  }, [activeSessionId]);
+
+  const handleSearch = async (params: SearchParams) => {
+    setSearchError(null);
     setIsSearching(true);
     setSearchMeta(params);
     setCurrentStep(2);
     setSearchOpen(false);
+    setViewMode("results");
 
-    setTimeout(() => {
-      setLeads(MOCK_LEADS);
-      setIsSearching(false);
-      setViewMode("results");
-      setCurrentStep(3);
-      const newSession: ChatSession = {
-        id: String(Date.now()),
-        title: `${params.categories[0]} in ${params.location}`,
-        time: "just now",
-        leadCount: params.count,
+    try {
+      const { searchSessionId } = await api.search.start({
+        ...params,
+        count: params.count ?? (params.mode === "natural" ? 20 : 10),
+      });
+
+      const poll = async () => {
+        const status = await api.search.status(searchSessionId);
+        if (status.status === "COMPLETED" && status.leads) {
+          setLeads(status.leads.map(toLead));
+          setIsSearching(false);
+          setCurrentStep(3);
+          setActiveSessionId(searchSessionId);
+          fetchSessions();
+        } else if (status.status === "FAILED") {
+          setIsSearching(false);
+          setSearchError("Search failed");
+        } else {
+          setTimeout(poll, POLL_INTERVAL);
+        }
       };
-      setSessions((prev) => [newSession, ...prev]);
-      setActiveSessionId(newSession.id);
-    }, 2000);
+      poll();
+    } catch (err) {
+      setIsSearching(false);
+      setSearchError(err instanceof Error ? err.message : "Search failed");
+    }
   };
 
   const toggleLead = (id: string) => {
@@ -83,7 +145,82 @@ export default function Index() {
     setSearchMeta(null);
     setCurrentStep(1);
     setActiveLead(null);
+    setActiveSessionId(null);
     setSearchOpen(true);
+    setSearchError(null);
+  };
+
+  const handleSaveToCrm = async (leadIds?: string[]) => {
+    const ids = leadIds ?? Array.from(selectedLeads);
+    if (ids.length === 0) return;
+    try {
+      const res = await api.leads.saveToCrm(ids);
+      setSelectedLeads((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      setLeads((prev) =>
+        prev.map((l) =>
+          res.results.some((r) => r.leadId === l.id) ? { ...l, isNew: false } : l
+        )
+      );
+      if (activeLead && ids.includes(activeLead.id)) {
+        setActiveLead(null);
+      }
+      fetchSessions();
+      toast({ title: "Saved", description: `${res.saved} lead(s) saved to CRM` });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to save",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleExport = async () => {
+    const ids = Array.from(selectedLeads);
+    if (ids.length === 0) return;
+    try {
+      await api.leads.export(ids, "csv");
+      toast({ title: "Exported", description: `${ids.length} lead(s) exported as CSV` });
+    } catch (err) {
+      toast({
+        title: "Export failed",
+        description: err instanceof Error ? err.message : "Failed to export",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleClearSelection = () => setSelectedLeads(new Set());
+
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      await api.sessions.delete(sessionId);
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(null);
+        setLeads([]);
+        setSearchMeta(null);
+        setViewMode("dashboard");
+        setCurrentStep(1);
+        setActiveLead(null);
+      }
+      toast({ title: "Deleted", description: "Session deleted" });
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to delete session",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleLeadUpdated = (updated: Lead) => {
+    setLeads((prev) => prev.map((l) => (l.id === updated.id ? updated : l)));
+    if (activeLead?.id === updated.id) setActiveLead(updated);
   };
 
   return (
@@ -91,9 +228,21 @@ export default function Index() {
       {/* Narrow sidebar */}
       <Sidebar
         sessions={sessions}
-        activeId={activeSessionId}
-        onSelect={setActiveSessionId}
+        activeId={activeSessionId ?? ""}
+        onSelect={(id) => setActiveSessionId(id)}
         onNew={handleNew}
+        onDeleteSession={handleDeleteSession}
+        userEmail={user?.email}
+        isAdmin={isAdmin}
+        onLogout={logout}
+        onManageUsers={isAdmin ? () => setManageUsersOpen(true) : undefined}
+      />
+
+      <ManageUsersSheet
+        open={manageUsersOpen}
+        onOpenChange={setManageUsersOpen}
+        currentUserId={user?.id}
+        isAdmin={isAdmin}
       />
 
       {/* Main area */}
@@ -105,12 +254,18 @@ export default function Index() {
             <Layers className="w-4 h-4 text-muted-foreground flex-shrink-0" />
             <WorkflowStepper currentStep={currentStep} />
           </div>
-          {viewMode === "results" && selectedLeads.size > 0 && (
-            <button className="flex-shrink-0 ml-4 flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-success/10 border border-success/30 text-success hover:bg-success/20 transition-colors">
-              <Download className="w-3.5 h-3.5" />
-              Export {selectedLeads.size} leads
-            </button>
-          )}
+          <div className="flex items-center gap-2 ml-auto">
+            <ThemeToggle className="flex-shrink-0" />
+            {viewMode === "results" && selectedLeads.size > 0 && (
+              <button
+                onClick={handleExport}
+                className="flex-shrink-0 flex items-center gap-1.5 text-xs font-semibold px-4 py-2 rounded-lg bg-success/10 border border-success/30 text-success hover:bg-success/20 transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export {selectedLeads.size} leads
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Content row */}
@@ -118,7 +273,7 @@ export default function Index() {
 
           {/* Search sidebar — collapsible */}
           <div className="flex-shrink-0 border-r border-border bg-surface-1 flex flex-col"
-            style={{ width: searchOpen ? 280 : 48, transition: "width 0.25s ease" }}
+            style={{ width: searchOpen ? 300 : 48, transition: "width 0.25s ease" }}
           >
             {/* Toggle */}
             <button
@@ -153,6 +308,10 @@ export default function Index() {
                 onViewLead={setActiveLead}
                 searchMeta={searchMeta}
                 isSearching={isSearching}
+                searchError={searchError}
+                onSaveToCrm={handleSaveToCrm}
+                onExport={handleExport}
+                onClearSelection={handleClearSelection}
               />
             )}
           </div>
@@ -161,7 +320,26 @@ export default function Index() {
 
       {/* Lead detail slide-out */}
       {activeLead && (
-        <LeadDetailPanel lead={activeLead} onClose={() => setActiveLead(null)} />
+        <LeadDetailPanel
+          lead={activeLead}
+          onClose={() => setActiveLead(null)}
+          onLeadUpdated={handleLeadUpdated}
+          onSaveLead={() => handleSaveToCrm([activeLead.id])}
+          onSkipLead={async () => {
+            try {
+              await api.leads.skip(activeLead.id);
+              handleLeadUpdated({ ...activeLead, isNew: false });
+              setActiveLead(null);
+              toast({ title: "Skipped", description: "Lead skipped" });
+            } catch (err) {
+              toast({
+                title: "Error",
+                description: err instanceof Error ? err.message : "Failed to skip",
+                variant: "destructive",
+              });
+            }
+          }}
+        />
       )}
     </div>
   );
@@ -196,50 +374,35 @@ function DashboardView() {
 
       {/* Stats */}
       <StatsBar />
-
-      {/* 7-step workflow */}
-      <div>
-        <h2 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-          <span className="w-1 h-4 rounded-full bg-primary inline-block" />
-          7-Step Lead Generation SOP
-        </h2>
-        <div className="grid grid-cols-4 gap-3">
-          {[
-            { step: 1, title: "Define Lead Type", desc: "Chain Store, Retailer, Manufacturer, E-Commerce..." },
-            { step: 2, title: "Search Google Maps", desc: "Use specific terms. Target priority cities & regions." },
-            { step: 3, title: "Create Lead List", desc: "Company, Name, Phone, Website, Email" },
-            { step: 4, title: "CRM Duplicate Check", desc: "Verify uniqueness. Request lead transfer if needed." },
-            { step: 5, title: "Enrichment Prep", desc: "Move verified non-duplicate leads forward." },
-            { step: 6, title: "Collect Details", desc: "Website → LinkedIn → Instagram → Google Maps" },
-            { step: 7, title: "Finalize Outreach", desc: "Enriched list ready for sales team outreach." },
-          ].map((s) => (
-            <div key={s.step} className="bg-card border border-border rounded-xl p-4 card-hover">
-              <div className="flex items-center gap-2.5 mb-2.5">
-                <span className="w-7 h-7 rounded-full bg-primary/15 border border-primary/30 text-primary text-xs font-bold flex items-center justify-center flex-shrink-0">
-                  {s.step}
-                </span>
-                <h3 className="text-xs font-semibold text-foreground leading-tight">{s.title}</h3>
-              </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed">{s.desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
 
 /* ─── Results ─── */
 function ResultsView({
-  leads, selectedLeads, onToggle, onSelectAllNew, onViewLead, searchMeta, isSearching,
+  leads,
+  selectedLeads,
+  onToggle,
+  onSelectAllNew,
+  onViewLead,
+  searchMeta,
+  isSearching,
+  searchError,
+  onSaveToCrm,
+  onExport,
+  onClearSelection,
 }: {
   leads: Lead[];
   selectedLeads: Set<string>;
   onToggle: (id: string) => void;
   onSelectAllNew: () => void;
   onViewLead: (lead: Lead) => void;
-  searchMeta: { location: string; categories: string[]; count: number } | null;
+  searchMeta: SearchParams | null;
   isSearching: boolean;
+  searchError: string | null;
+  onSaveToCrm: () => void;
+  onExport: () => void;
+  onClearSelection: () => void;
 }) {
   if (isSearching) {
     return (
@@ -248,7 +411,9 @@ function ResultsView({
         <div className="text-center">
           <p className="text-sm font-semibold text-foreground">Searching for leads...</p>
           <p className="text-xs text-muted-foreground mt-1">
-            {searchMeta?.categories.join(", ")} in <span className="text-foreground">{searchMeta?.location}</span>
+            {searchMeta?.mode === "natural"
+              ? searchMeta.query
+              : `${searchMeta?.categories.join(", ")} in ${searchMeta?.location}`}
           </p>
         </div>
       </div>
@@ -257,16 +422,29 @@ function ResultsView({
 
   return (
     <div className="p-6 max-w-5xl mx-auto animate-slide-up">
+      {searchError && (
+        <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
+          {searchError}
+        </div>
+      )}
       {/* Result chips */}
       <div className="flex items-center gap-2 mb-6 flex-wrap">
-        {searchMeta?.categories.map((c) => (
-          <span key={c} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
-            <Search className="w-3 h-3 text-primary" />{c}
+        {searchMeta?.mode === "natural" ? (
+          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+            <Search className="w-3 h-3 text-primary" />{searchMeta.query}
           </span>
-        ))}
-        <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
-          <MapPin className="w-3 h-3 text-primary" />{searchMeta?.location}
-        </span>
+        ) : (
+          <>
+            {(searchMeta?.mode === "manual" ? searchMeta.categories : []).map((c) => (
+              <span key={c} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+                <Search className="w-3 h-3 text-primary" />{c}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+              <MapPin className="w-3 h-3 text-primary" />{searchMeta?.mode === "manual" ? searchMeta.location : ""}
+            </span>
+          </>
+        )}
         <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary font-semibold">
           <Shield className="w-3 h-3" />{leads.length} leads found
         </span>
@@ -300,10 +478,23 @@ function ResultsView({
             <span className="text-primary font-bold">{selectedLeads.size}</span> leads ready to save
           </p>
           <div className="flex gap-2">
-            <button className="text-xs px-4 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-all">
+            <button
+              onClick={onClearSelection}
+              className="text-xs px-4 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
+            >
               Clear
             </button>
-            <button className="text-xs px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-all flex items-center gap-1.5 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]">
+            <button
+              onClick={onExport}
+              className="text-xs px-4 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-all flex items-center gap-1.5"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export
+            </button>
+            <button
+              onClick={onSaveToCrm}
+              className="text-xs px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-all flex items-center gap-1.5 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]"
+            >
               <Download className="w-3.5 h-3.5" />
               Save to CRM
             </button>

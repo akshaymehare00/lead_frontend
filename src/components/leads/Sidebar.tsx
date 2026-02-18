@@ -1,4 +1,4 @@
-import { MessageSquare, Clock, Gem } from "lucide-react";
+import { MessageSquare, Clock, Gem, LogOut, Users, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface ChatSession {
@@ -13,11 +13,16 @@ interface SidebarProps {
   activeId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
+  onDeleteSession?: (sessionId: string) => void;
+  userEmail?: string;
+  isAdmin?: boolean;
+  onLogout?: () => void;
+  onManageUsers?: () => void;
 }
 
-export const Sidebar = ({ sessions, activeId, onSelect, onNew }: SidebarProps) => {
+export const Sidebar = ({ sessions, activeId, onSelect, onNew, onDeleteSession, userEmail, isAdmin, onLogout, onManageUsers }: SidebarProps) => {
   return (
-    <div className="flex flex-col h-full bg-sidebar border-r border-sidebar-border w-64 flex-shrink-0">
+    <div className="flex flex-col h-full bg-sidebar border-r border-sidebar-border w-52 flex-shrink-0">
       {/* Logo */}
       <div className="flex items-center gap-3 px-5 py-4 border-b border-sidebar-border">
         <div className="w-8 h-8 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center">
@@ -50,33 +55,75 @@ export const Sidebar = ({ sessions, activeId, onSelect, onNew }: SidebarProps) =
         {sessions.map((session) => {
           const active = session.id === activeId;
           return (
-            <button
+            <div
               key={session.id}
-              onClick={() => onSelect(session.id)}
               className={cn(
-                "w-full text-left flex items-start gap-3 px-3 py-2.5 rounded-lg transition-all duration-150",
+                "group relative flex items-start gap-3 px-3 py-2.5 rounded-lg transition-all duration-150",
                 active
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
               )}
             >
-              <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-60" />
-              <div className="min-w-0">
-                <p className="text-xs font-medium truncate">{session.title}</p>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <Clock className="w-2.5 h-2.5 opacity-40" />
-                  <p className="text-[10px] opacity-50">{session.time}</p>
-                  {session.leadCount && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium ml-1">
-                      {session.leadCount}
-                    </span>
-                  )}
+              <button
+                onClick={() => onSelect(session.id)}
+                className="flex-1 min-w-0 flex items-start gap-3 text-left"
+              >
+                <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 opacity-60" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium truncate">{session.title}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Clock className="w-2.5 h-2.5 opacity-40" />
+                    <p className="text-[10px] opacity-50">{session.time}</p>
+                    {session.leadCount !== undefined && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium ml-1">
+                        {session.leadCount}
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            </button>
+              </button>
+              {onDeleteSession && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDeleteSession(session.id); }}
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-destructive/20 text-sidebar-foreground/50 hover:text-destructive transition-all flex-shrink-0"
+                  title="Delete session"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              )}
+            </div>
           );
         })}
       </div>
+
+      {/* User section */}
+      {(userEmail || onLogout) && (
+        <div className="p-3 border-t border-sidebar-border space-y-1.5">
+          {isAdmin && onManageUsers && (
+            <button
+              onClick={onManageUsers}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-all text-xs font-medium"
+            >
+              <Users className="w-3.5 h-3.5" />
+              Manage Users
+            </button>
+          )}
+          {userEmail && (
+            <p className="text-[10px] text-sidebar-foreground/50 truncate px-3" title={userEmail}>
+              {userEmail}
+            </p>
+          )}
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sidebar-foreground/70 hover:bg-destructive/10 hover:text-destructive transition-all text-xs font-medium"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              Sign out
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };

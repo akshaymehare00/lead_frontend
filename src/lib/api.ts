@@ -235,6 +235,15 @@ export const api = {
   },
 
   leads: {
+    list: (params?: { filter?: "all" | "enriched" | "pending"; limit?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.filter) q.set("filter", params.filter);
+      if (params?.limit) q.set("limit", String(params.limit));
+      const query = q.toString();
+      return request<{ leads: LeadResponse[] }>(
+        `/api/v1/leads${query ? `?${query}` : ""}`
+      );
+    },
     get: (leadId: string) => request<LeadResponse>(`/api/v1/leads/${leadId}`),
     history: (leadId: string) =>
       request<LeadHistoryItem[]>(`/api/v1/leads/${leadId}/history`),

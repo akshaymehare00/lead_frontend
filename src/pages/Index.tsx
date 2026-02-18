@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Sidebar, ChatSession } from "@/components/leads/Sidebar";
 import { useAuth } from "@/context/AuthContext";
@@ -21,7 +21,7 @@ import { api, toLead } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { generateLeadsCsv, downloadCsv } from "@/lib/csv-export";
 
-type ViewMode = "dashboard" | "results" | "crm-check" | "enrichment";
+type ViewMode = "dashboard" | "results" | "crm-check" | "enrichment" | "leads-total" | "leads-enriched" | "leads-pending";
 
 export interface CrmCheckLead extends Lead {
   crmStatus?: string;
@@ -58,6 +58,9 @@ export default function Index() {
   const [crmCheckSelectedLeads, setCrmCheckSelectedLeads] = useState<Set<string>>(new Set());
   const [enrichmentSelectedLeads, setEnrichmentSelectedLeads] = useState<Set<string>>(new Set());
   const [leadsCrmProcessed, setLeadsCrmProcessed] = useState<Set<string>>(new Set());
+  const [leadsListData, setLeadsListData] = useState<Lead[]>([]);
+  const [leadsListFilter, setLeadsListFilter] = useState<"all" | "enriched" | "pending">("all");
+  const [isLoadingLeadsList, setIsLoadingLeadsList] = useState(false);
 
   useEffect(() => {
     setMaxStepReached((prev) => Math.max(prev, currentStep));
@@ -311,6 +314,49 @@ export default function Index() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  };
+
+  const fetchLeadsList = useCallback(async (filter: "all" | "enriched" | "pending") => {
+    setIsLoadingLeadsList(true);
+    setLeadsListFilter(filter);
+    try {
+      const res = await api.leads.list({ filter, limit: 1000 });
+      setLeadsListData((res.leads ?? []).map(toLead));
+    } catch {
+      try {
+        const { sessions: list } = await api.sessions.list(50, 0);
+        const allLeads: Lead[] = [];
+        const seen = new Set<string>();
+        for (const s of list) {
+          const session = await api.sessions.get(s.id);
+          for (const lr of session.leads ?? []) {
+            if (seen.has(lr.id)) continue;
+            seen.add(lr.id);
+            const lead = toLead(lr);
+            if (filter === "enriched" && !lead.email && !lead.linkedin && !lead.instagram) continue;
+            if (filter === "pending" && (lead.email || lead.linkedin || lead.instagram)) continue;
+            allLeads.push(lead);
+          }
+        }
+        if (filter === "enriched") {
+          setLeadsListData(allLeads.filter((l) => l.email || l.linkedin || l.instagram));
+        } else if (filter === "pending") {
+          setLeadsListData(allLeads.filter((l) => !l.email && !l.linkedin && !l.instagram));
+        } else {
+          setLeadsListData(allLeads);
+        }
+      } catch (err) {
+        setLeadsListData([]);
+      }
+    } finally {
+      setIsLoadingLeadsList(false);
+    }
+  }, []);
+
+  const navigateToLeadsList = (statKey: "totalLeads" | "enriched" | "pendingReview") => {
+    const filter = statKey === "totalLeads" ? "all" : statKey === "enriched" ? "enriched" : "pending";
+    setViewMode(filter === "all" ? "leads-total" : filter === "enriched" ? "leads-enriched" : "leads-pending");
+    fetchLeadsList(filter);
   };
 
   const toggleCrmCheckLead = (id: string) => {
@@ -613,7 +659,15 @@ export default function Index() {
           {/* Main content */}
           <div className="flex-1 overflow-y-auto min-w-0">
             {viewMode === "dashboard" ? (
-              <DashboardView />
+              <DashboardView onStatClick={navigateToLeadsList} />
+            ) : viewMode === "leads-total" || viewMode === "leads-enriched" || viewMode === "leads-pending" ? (
+              <LeadsListView
+                leads={leadsListData}
+                filter={leadsListFilter}
+                isLoading={isLoadingLeadsList}
+                onBack={() => setViewMode("dashboard")}
+                onViewLead={setActiveLead}
+              />
             ) : viewMode === "enrichment" ? (
               <EnrichmentView
                 leads={leads.filter((l) => (l.crmStatus ?? "") === "SAVED" || (l.crmStatus ?? "") === "NEW")}
@@ -1079,7 +1133,7 @@ function CrmCheckView({
 
       {/* Sticky save bar when selected (like Create List) */}
       {selectedLeads.size > 0 && (
-        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up">
+        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up z-20">
           <p className="text-sm font-medium text-foreground">
             <span className="text-primary font-bold">{selectedLeads.size}</span> selected
           </p>
@@ -1128,6 +1182,135 @@ function CrmCheckView({
         </div>
       )}
       </div>
+    </div>
+  );
+}
+
+/* ─── Leads List View (Total / Enriched / Pending with filters) ─── */
+function LeadsListView({
+  leads,
+  filter,
+  isLoading,
+  onBack,
+  onViewLead,
+}: {
+  leads: Lead[];
+  filter: "all" | "enriched" | "pending";
+  isLoading: boolean;
+  onBack: () => void;
+  onViewLead: (lead: Lead) => void;
+}) {
+  const [ratingMin, setRatingMin] = useState<number | "">("");
+  const [cityFilter, setCityFilter] = useState("");
+  const [categoriesFilter, setCategoriesFilter] = useState<Set<string>>(new Set());
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    leads.forEach((l) => l.category && set.add(l.category));
+    return Array.from(set).sort();
+  }, [leads]);
+
+  const filteredLeads = useMemo(() => {
+    return leads.filter((l) => {
+      if (ratingMin !== "" && (l.rating ?? 0) < ratingMin) return false;
+      if (cityFilter.trim() && !(l.address ?? "").toLowerCase().includes(cityFilter.trim().toLowerCase())) return false;
+      if (categoriesFilter.size > 0 && !categoriesFilter.has(l.category)) return false;
+      return true;
+    });
+  }, [leads, ratingMin, cityFilter, categoriesFilter]);
+
+  const title = filter === "all" ? "Total Leads" : filter === "enriched" ? "Enriched" : "Pending Review";
+
+  return (
+    <div className="p-6 max-w-5xl mx-auto animate-slide-up">
+      <div className="flex items-center justify-between gap-4 mb-6">
+        <Button variant="ghost" size="sm" onClick={onBack} className="gap-2">
+          <ArrowLeft className="w-4 h-4" />
+          Back
+        </Button>
+        <h1 className="text-lg font-semibold">{title}</h1>
+      </div>
+
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-4 mb-6 p-4 rounded-xl border border-border bg-card">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">Rating:</span>
+          <select
+            value={ratingMin === "" ? "" : ratingMin}
+            onChange={(e) => setRatingMin(e.target.value === "" ? "" : Number(e.target.value))}
+            className="h-8 px-3 rounded-md border border-input bg-background text-sm"
+          >
+            <option value="">All</option>
+            <option value={3}>3+</option>
+            <option value={3.5}>3.5+</option>
+            <option value={4}>4+</option>
+            <option value={4.5}>4.5+</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-muted-foreground">City:</span>
+          <input
+            type="text"
+            placeholder="Filter by city..."
+            value={cityFilter}
+            onChange={(e) => setCityFilter(e.target.value)}
+            className="h-8 px-3 rounded-md border border-input bg-background text-sm w-40"
+          />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-medium text-muted-foreground">Category:</span>
+          {categories.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() =>
+                setCategoriesFilter((prev) => {
+                  const next = new Set(prev);
+                  next.has(c) ? next.delete(c) : next.add(c);
+                  return next;
+                })
+              }
+              className={cn(
+                "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                categoriesFilter.has(c)
+                  ? "bg-primary/15 border-primary/30 text-primary"
+                  : "bg-secondary/50 border-border text-muted-foreground hover:bg-secondary"
+              )}
+            >
+              {c}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {isLoading ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-4">
+          <div className="w-12 h-12 border-2 border-border border-t-primary rounded-full animate-spin" />
+          <p className="text-sm text-muted-foreground">Loading leads...</p>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground mb-4">
+            {filteredLeads.length} of {leads.length} leads
+          </p>
+          <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
+            {filteredLeads.map((lead) => (
+              <ClickableLeadCard
+                key={lead.id}
+                lead={lead}
+                selected={false}
+                onToggle={() => onViewLead(lead)}
+                onView={onViewLead}
+              />
+            ))}
+          </div>
+          {filteredLeads.length === 0 && (
+            <div className="py-12 text-center rounded-xl border border-dashed border-border bg-muted/30">
+              <p className="text-sm text-muted-foreground">No leads match the filters</p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -1234,7 +1417,7 @@ function EnrichmentView({
       </div>
 
       {selectedLeads.size > 0 && (
-        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up">
+        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up z-20">
           <p className="text-sm font-medium text-foreground">
             <span className="text-primary font-bold">{selectedLeads.size}</span> selected
           </p>
@@ -1274,7 +1457,7 @@ function EnrichmentView({
 }
 
 /* ─── Dashboard ─── */
-function DashboardView() {
+function DashboardView({ onStatClick }: { onStatClick?: (key: "totalLeads" | "enriched" | "pendingReview") => void }) {
   return (
     <div className="p-8 space-y-8 max-w-5xl mx-auto animate-fade-in">
       {/* Hero */}
@@ -1301,7 +1484,7 @@ function DashboardView() {
       </div>
 
       {/* Stats */}
-      <StatsBar />
+      <StatsBar onStatClick={onStatClick} />
 
       {/* Enrichment & CRM — where to see details */}
       <div className="rounded-xl border border-border bg-card p-6">
@@ -1445,7 +1628,7 @@ function ResultsView({
 
       {/* Sticky save bar */}
       {selectedLeads.size > 0 && (
-        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up">
+        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up z-20">
           <p className="text-sm font-medium text-foreground">
             <span className="text-primary font-bold">{selectedLeads.size}</span> selected
           </p>

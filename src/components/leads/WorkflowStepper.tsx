@@ -2,7 +2,7 @@ import { CheckCircle2, Circle, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const STEPS = [
-  { id: 1, title: "Define Lead Type" },
+  { id: 1, title: "Home" },
   { id: 2, title: "Search Maps" },
   { id: 3, title: "Create List" },
   { id: 4, title: "CRM Check" },

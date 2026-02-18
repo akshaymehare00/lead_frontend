@@ -1,15 +1,16 @@
 import { useEffect, useState } from "react";
 import { TrendingUp, Users, CheckCircle, Clock } from "lucide-react";
 import { api, type StatsResponse } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const STAT_CONFIG = [
-  { key: "totalLeads" as const, label: "Total Leads", icon: Users, color: "text-primary" },
-  { key: "savedThisWeek" as const, label: "Saved This Week", icon: TrendingUp, color: "text-success" },
-  { key: "enriched" as const, label: "Enriched", icon: CheckCircle, color: "text-warning" },
-  { key: "pendingReview" as const, label: "Pending Review", icon: Clock, color: "text-destructive" },
+  { key: "totalLeads" as const, label: "Total Leads", icon: Users, color: "text-primary", clickable: true },
+  { key: "savedThisWeek" as const, label: "Saved This Week", icon: TrendingUp, color: "text-success", clickable: false },
+  { key: "enriched" as const, label: "Enriched", icon: CheckCircle, color: "text-warning", clickable: true },
+  { key: "pendingReview" as const, label: "Pending Review", icon: Clock, color: "text-destructive", clickable: true },
 ];
 
-export const StatsBar = () => {
+export const StatsBar = ({ onStatClick }: { onStatClick?: (key: "totalLeads" | "enriched" | "pendingReview") => void }) => {
   const [stats, setStats] = useState<StatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,14 +47,22 @@ export const StatsBar = () => {
 
   return (
     <div className="grid grid-cols-4 gap-4">
-      {STAT_CONFIG.map(({ key, label, icon: Icon, color }) => {
+      {STAT_CONFIG.map(({ key, label, icon: Icon, color, clickable }) => {
         const value = stats[key];
         const change = stats.change[key];
         const isPositive = change?.startsWith("+");
+        const onClick = clickable && onStatClick ? () => onStatClick(key) : undefined;
         return (
           <div
             key={key}
-            className="bg-card border border-border rounded-xl p-4 flex items-center gap-4 card-hover"
+            role={onClick ? "button" : undefined}
+            tabIndex={onClick ? 0 : undefined}
+            onClick={onClick}
+            onKeyDown={onClick ? (e) => e.key === "Enter" && onClick() : undefined}
+            className={cn(
+              "bg-card border border-border rounded-xl p-4 flex items-center gap-4 card-hover",
+              onClick && "cursor-pointer hover:border-primary/30 hover:bg-primary/5 transition-colors"
+            )}
           >
             <div className="w-10 h-10 rounded-lg bg-secondary/60 flex items-center justify-center flex-shrink-0">
               <Icon className={`w-5 h-5 ${color}`} />

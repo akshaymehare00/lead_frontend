@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Search, MapPin, ChevronDown, Zap, SlidersHorizontal } from "lucide-react";
+import { Search, ChevronDown, Zap, SlidersHorizontal } from "lucide-react";
+import { LocationAutocomplete } from "./LocationAutocomplete";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -104,19 +105,15 @@ export const SearchPanel = ({ onSearch, isSearching }: SearchPanelProps) => {
       ) : (
         /* Manual: Location + Business Category */
         <>
-          {/* Location Input */}
+          {/* Location Input with autocomplete */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Location</label>
-            <div className="relative">
-              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary/60" />
-              <input
-                type="text"
-                placeholder="e.g. Mumbai, India"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                className="w-full bg-secondary/50 border border-border rounded-lg pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all"
-              />
-            </div>
+            <LocationAutocomplete
+              value={location}
+              onChange={setLocation}
+              placeholder="e.g. Pune, Mumbai"
+              disabled={isSearching}
+            />
           </div>
 
           {/* Categories - only in manual mode */}

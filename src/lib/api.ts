@@ -79,6 +79,14 @@ export interface SearchParamsManual {
 
 export type SearchParams = SearchParamsNatural | SearchParamsManual;
 
+export interface PlaceSuggestion {
+  id: string;
+  name: string;
+  canonicalName: string;
+  countryCode: string;
+  targetType: string;
+}
+
 export interface SearchStartResponse {
   searchSessionId: string;
   status: string;
@@ -131,9 +139,22 @@ export interface SessionDetailResponse extends SessionListItem {
   location: string | null;
   categories: string[];
   status: string;
+  savedCount?: number;
+  duplicateCount?: number;
   userId: string | null;
   user?: { id: string; email: string; name: string };
   leads: LeadResponse[];
+}
+
+export interface LeadHistoryItem {
+  id: string;
+  leadId: string;
+  action: string;
+  step: number | null;
+  fromStatus: string | null;
+  toStatus: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface StatsResponse {
@@ -178,6 +199,13 @@ export const api = {
       }),
   },
 
+  places: {
+    autocomplete: (q: string, limit = 5) =>
+      request<{ suggestions: PlaceSuggestion[] }>(
+        `/api/v1/places/autocomplete?q=${encodeURIComponent(q)}&limit=${limit}`
+      ),
+  },
+
   search: {
     start: (params: SearchParams) =>
       request<SearchStartResponse>("/api/v1/search", {
@@ -195,6 +223,11 @@ export const api = {
       ),
     get: (sessionId: string) =>
       request<SessionDetailResponse>(`/api/v1/sessions/${sessionId}`),
+    rename: (sessionId: string, title: string) =>
+      request<SessionListItem>(`/api/v1/sessions/${sessionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      }),
     delete: (sessionId: string) =>
       request<{ success: boolean; message: string }>(`/api/v1/sessions/${sessionId}`, {
         method: "DELETE",
@@ -203,6 +236,8 @@ export const api = {
 
   leads: {
     get: (leadId: string) => request<LeadResponse>(`/api/v1/leads/${leadId}`),
+    history: (leadId: string) =>
+      request<LeadHistoryItem[]>(`/api/v1/leads/${leadId}/history`),
     crmCheck: (leadId: string, body?: { phone?: string; website?: string }) =>
       request<{ leadId: string; crmStatus: string; message: string; duplicateOf: unknown }>(
         `/api/v1/leads/${leadId}/crm-check`,
@@ -212,6 +247,11 @@ export const api = {
       request<{ leadId: string; crmStatus: string }>(`/api/v1/leads/${leadId}/status`, {
         method: "PATCH",
         body: JSON.stringify({ crmStatus }),
+      }),
+    updateStep: (leadId: string, currentStep: number) =>
+      request<LeadResponse>(`/api/v1/leads/${leadId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ currentStep }),
       }),
     skip: (leadId: string) =>
       request<{ leadId: string; crmStatus: string }>(`/api/v1/leads/${leadId}/skip`, {
@@ -271,5 +311,11 @@ export function toLead(lead: LeadResponse) {
     website: lead.website ?? undefined,
     hours: lead.hours ?? undefined,
     isNew: lead.crmStatus === "NEW",
+    crmStatus: lead.crmStatus,
+    duplicateOf: lead.duplicateOf ?? undefined,
+    email: lead.email ?? undefined,
+    linkedin: lead.linkedin ?? undefined,
+    instagram: lead.instagram ?? undefined,
+    enrichmentStatus: lead.enrichmentStatus,
   };
 }

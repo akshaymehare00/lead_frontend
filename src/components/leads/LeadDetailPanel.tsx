@@ -2,11 +2,11 @@ import { useState, useEffect } from "react";
 import {
   X, Star, Phone, Globe, MapPin, Clock, ExternalLink,
   CheckCircle2, Circle, Tag, User, Building2, Mail,
-  Linkedin, Instagram, FileText, ArrowRight
+  Linkedin, Instagram, FileText, ArrowRight, History
 } from "lucide-react";
 import { Lead } from "./LeadCard";
 import { cn } from "@/lib/utils";
-import { api } from "@/lib/api";
+import { api, type LeadHistoryItem } from "@/lib/api";
 
 const ENRICHMENT_SOURCE_MAP: Record<string, { icon: typeof Globe; label: string }> = {
   WEBSITE: { icon: Globe, label: "Company Website" },
@@ -30,8 +30,10 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
     instagram?: string | null;
     contactPerson?: string | null;
     designation?: string | null;
+    crmStatus?: string;
     enrichmentSources?: { source: string; done: boolean }[];
   } | null>(null);
+  const [leadHistory, setLeadHistory] = useState<LeadHistoryItem[]>([]);
 
   useEffect(() => {
     if (!lead?.id) return;
@@ -44,10 +46,19 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
           instagram: l.instagram,
           contactPerson: l.contactPerson,
           designation: l.designation,
+          crmStatus: l.crmStatus,
           enrichmentSources: l.enrichmentSources,
         })
       )
       .catch(() => setFullLead(null));
+  }, [lead?.id]);
+
+  useEffect(() => {
+    if (!lead?.id) return;
+    api.leads
+      .history(lead.id)
+      .then(setLeadHistory)
+      .catch(() => setLeadHistory([]));
   }, [lead?.id]);
 
   if (!lead) return null;
@@ -76,11 +87,23 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
         <div className="flex items-start justify-between p-6 border-b border-border">
           <div className="flex-1 min-w-0 pr-4">
             <div className="flex items-center gap-2 mb-1">
-              {lead.isNew && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/15 border border-primary/30 text-primary font-semibold">
-                  NEW
-                </span>
-              )}
+              {(() => {
+                const s = fullLead?.crmStatus ?? lead.crmStatus ?? (lead.isNew ? "NEW" : "");
+                if (!s) return null;
+                const badges: Record<string, { label: string; cls: string }> = {
+                  NEW: { label: "NEW", cls: "bg-primary/15 border-primary/30 text-primary" },
+                  SAVED: { label: "SAVED", cls: "bg-success/15 border-success/30 text-success" },
+                  DUPLICATE: { label: "DUPLICATE", cls: "bg-destructive/15 border-destructive/30 text-destructive" },
+                  ALREADY_REACHED: { label: "REACHED", cls: "bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400" },
+                  SKIPPED: { label: "SKIPPED", cls: "bg-muted border-border text-muted-foreground" },
+                };
+                const b = badges[s] ?? badges.NEW;
+                return (
+                  <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-semibold", b.cls)}>
+                    {b.label}
+                  </span>
+                );
+              })()}
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary border border-border text-muted-foreground font-medium">
                 {lead.category}
               </span>
@@ -162,6 +185,36 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
             </div>
           </div>
 
+          {/* Audit Trail / History */}
+          {leadHistory.length > 0 && (
+            <div className="p-6 border-b border-border">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-2">
+                <History className="w-3.5 h-3.5" />
+                Audit Trail
+              </p>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {leadHistory.map((h) => (
+                  <div
+                    key={h.id}
+                    className="flex items-start gap-2 px-3 py-2 rounded-lg bg-secondary/30 border border-border text-xs"
+                  >
+                    <span className="font-medium text-foreground shrink-0">
+                      {h.action.replace(/_/g, " ")}
+                    </span>
+                    {(h.fromStatus || h.toStatus) && (
+                      <span className="text-muted-foreground">
+                        {h.fromStatus} → {h.toStatus}
+                      </span>
+                    )}
+                    <span className="text-muted-foreground/70 text-[10px] ml-auto shrink-0">
+                      {new Date(h.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* CRM Status */}
           <div className="p-6">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
@@ -173,12 +226,26 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
               </div>
               <div>
                 <p className="text-xs font-semibold text-foreground">
-                  {lead.isNew ? "Not in CRM — New Lead" : "Existing Lead in CRM"}
+                  {fullLead?.crmStatus === "SAVED"
+                    ? "Saved to CRM"
+                    : fullLead?.crmStatus === "DUPLICATE"
+                    ? "Duplicate — exists in CRM"
+                    : fullLead?.crmStatus === "ALREADY_REACHED"
+                    ? "Already contacted"
+                    : fullLead?.crmStatus === "SKIPPED"
+                    ? "Skipped"
+                    : lead.isNew
+                    ? "Not in CRM — New Lead"
+                    : "Existing Lead in CRM"}
                 </p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {lead.isNew
+                  {fullLead?.crmStatus === "NEW" || lead.isNew
                     ? "Proceed to enrichment step"
-                    : "Request lead transfer from Global Sales Head"}
+                    : fullLead?.crmStatus === "SAVED"
+                    ? "Successfully added to CRM"
+                    : fullLead?.crmStatus === "DUPLICATE"
+                    ? "Lead already exists — link to original"
+                    : "View history for details"}
                 </p>
               </div>
             </div>
@@ -188,13 +255,15 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
         {/* Footer actions */}
         <div className="p-4 border-t border-border bg-surface-1 flex gap-2">
           <button
-            onClick={onSkipLead}
+            type="button"
+            onClick={() => onSkipLead?.()}
             className="flex-1 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-secondary transition-all font-medium"
           >
             Skip Lead
           </button>
           <button
-            onClick={onSaveLead}
+            type="button"
+            onClick={() => onSaveLead?.()}
             className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]"
           >
             Save to CRM

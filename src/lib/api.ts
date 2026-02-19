@@ -1,9 +1,9 @@
 /**
  * Lead Compass API Client
- * Base URL: VITE_API_URL or http://localhost:3000
+ * Base URL: VITE_API_URL or https://lead-backend-ehky.onrender.com
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
+const API_BASE = import.meta.env.VITE_API_URL || "https://lead-backend-ehky.onrender.com";
 
 const TOKEN_KEY = "lead-compass-token";
 

@@ -315,9 +315,38 @@ Initiates a lead search (natural language or manual). Returns a `searchSessionId
 }
 ```
 
+**Error responses:**
+
+- **400 Invalid query:** `{ "valid": false, "error": "Invalid or empty query" }`
+- **400 Schema validation:** `{ "valid": false, "error": "Invalid request", "details": { "query": ["Required"], "count": ["Must be between 10 and 100"] } }`
+
 ---
 
-### 2. Search Status — Poll for Results
+### 2. Optional: AI Query Enhancement (Natural Language)
+
+**POST** `/search/enhance-query`
+
+Enhances a natural language search query for better results.
+
+**Request Body:**
+
+```json
+{
+  "query": "jewelry shops dubai"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "enhancedQuery": "Find jewellery shops and gold retailers in Dubai, UAE"
+}
+```
+
+---
+
+### 3. Search Status — Poll for Results
 
 **GET** `/search/:searchSessionId/status`
 

@@ -1,9 +1,11 @@
 /**
  * Lead Compass API Client
- * Base URL: VITE_API_URL or https://lead-backend-ehky.onrender.com
+ * Base URL: VITE_API_URL or http://localhost:3000
  */
 
-const API_BASE = import.meta.env.VITE_API_URL || "https://lead-backend-ehky.onrender.com";
+const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.PROD ? "https://lead-backend-ehky.onrender.com" : "http://localhost:3000");
 
 const TOKEN_KEY = "lead-compass-token";
 
@@ -17,8 +19,23 @@ export function setToken(token: string | null) {
 }
 
 export interface ApiError {
+  valid?: boolean;
   error: string;
   details?: Record<string, unknown>;
+}
+
+/** Parse 400 error: { valid: false, error: "..." } or { valid: false, error: "Invalid request", details: {...} } */
+function parseApiError(err: unknown): string {
+  const obj = err as ApiError & { message?: string };
+  if (obj?.error) return obj.error;
+  if (obj?.message) return obj.message;
+  return "Request failed";
+}
+
+/** Get validation details for display */
+export function getApiErrorDetails(err: unknown): Record<string, unknown> | undefined {
+  const obj = err as ApiError;
+  return obj?.details;
 }
 
 async function request<T>(
@@ -38,7 +55,10 @@ async function request<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as ApiError).error || "Request failed");
+    const msg = parseApiError(err);
+    const e = new Error(msg) as Error & { details?: Record<string, unknown> };
+    e.details = (err as ApiError).details;
+    throw e;
   }
 
   const contentType = res.headers.get("Content-Type");
@@ -67,14 +87,14 @@ export interface UserResponse {
 export interface SearchParamsNatural {
   mode: "natural";
   query: string;
-  count?: number;
+  maxLead?: number;
 }
 
 export interface SearchParamsManual {
   mode: "manual";
   location: string;
   categories: string[];
-  count?: number;
+  maxLead?: number;
 }
 
 export type SearchParams = SearchParamsNatural | SearchParamsManual;
@@ -214,6 +234,12 @@ export const api = {
       }),
     status: (searchSessionId: string) =>
       request<SearchStatusResponse>(`/api/v1/search/${searchSessionId}/status`),
+    /** Optional AI query enhancement for natural language search */
+    enhanceQuery: (query: string) =>
+      request<{ enhancedQuery: string }>("/api/v1/search/enhance-query", {
+        method: "POST",
+        body: JSON.stringify({ query }),
+      }),
   },
 
   sessions: {

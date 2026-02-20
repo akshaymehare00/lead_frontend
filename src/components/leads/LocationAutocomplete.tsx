@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { MapPin } from "lucide-react";
+import { Loader2, MapPin } from "lucide-react";
 import { api, type PlaceSuggestion } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -45,7 +45,9 @@ export function LocationAutocomplete({
       try {
         const { suggestions: list } = await api.places.autocomplete(q, 5);
         setSuggestions(list);
-        setOpen(list.length > 0);
+        // Don't reopen dropdown if input already matches a suggestion (user just selected it)
+        const isAlreadySelected = list.some((s) => s.canonicalName === q);
+        setOpen(list.length > 0 && !isAlreadySelected);
       } catch {
         setSuggestions([]);
         setOpen(false);
@@ -98,10 +100,13 @@ export function LocationAutocomplete({
           onBlur={handleBlur}
           disabled={disabled}
           autoComplete="off"
-          className="w-full bg-secondary/50 border border-border rounded-lg pl-9 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all"
+          className={cn(
+            "w-full bg-secondary/50 border border-border rounded-lg pl-9 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/40 transition-all",
+            loading ? "pr-10" : "pr-4"
+          )}
         />
         {loading && (
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+          <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-primary animate-spin" />
         )}
       </div>
 

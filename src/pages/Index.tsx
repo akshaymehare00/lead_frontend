@@ -146,12 +146,12 @@ export default function Index() {
         });
         setSearchMeta(
           session.mode === "NATURAL"
-            ? { mode: "natural", query: session.title, count: session.leadCount }
+            ? { mode: "natural", query: session.title, maxLead: session.leadCount }
             : {
                 mode: "manual",
                 location: session.location ?? "",
                 categories: session.categories,
-                count: session.leadCount,
+                maxLead: session.leadCount,
               }
         );
         setViewMode("results");
@@ -174,7 +174,7 @@ export default function Index() {
     try {
       const { searchSessionId } = await api.search.start({
         ...params,
-        count: params.count ?? (params.mode === "natural" ? 20 : 10),
+        maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
       });
 
       const poll = async () => {
@@ -195,7 +195,15 @@ export default function Index() {
       poll();
     } catch (err) {
       setIsSearching(false);
-      setSearchError(err instanceof Error ? err.message : "Search failed");
+      let msg = err instanceof Error ? err.message : "Search failed";
+      const details = (err as Error & { details?: Record<string, unknown> })?.details;
+      if (details && typeof details === "object") {
+        const parts = Object.entries(details)
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`)
+          .slice(0, 3);
+        if (parts.length) msg += ` (${parts.join("; ")})`;
+      }
+      setSearchError(msg);
     }
   };
 

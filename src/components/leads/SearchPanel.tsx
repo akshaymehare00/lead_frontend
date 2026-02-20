@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export type SearchParams =
-  | { mode: "natural"; query: string; count: number }
-  | { mode: "manual"; location: string; categories: string[]; count: number };
+  | { mode: "natural"; query: string; maxLead: number }
+  | { mode: "manual"; location: string; categories: string[]; maxLead: number };
 
 const CATEGORIES = [
   "Chain Store",
@@ -41,10 +41,10 @@ export const SearchPanel = ({ onSearch, isSearching }: SearchPanelProps) => {
   const handleSearch = () => {
     if (mode === "natural") {
       if (!query.trim()) return;
-      onSearch({ mode: "natural", query: query.trim(), count: leadCount });
+      onSearch({ mode: "natural", query: query.trim(), maxLead: leadCount });
     } else {
       if (!location.trim() || selectedCategories.length === 0) return;
-      onSearch({ mode: "manual", location, categories: selectedCategories, count: leadCount });
+      onSearch({ mode: "manual", location, categories: selectedCategories, maxLead: leadCount });
     }
   };
 
@@ -144,10 +144,10 @@ export const SearchPanel = ({ onSearch, isSearching }: SearchPanelProps) => {
         </>
       )}
 
-      {/* Lead Count */}
+      {/* Max Lead Count */}
       <div className="space-y-1.5">
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Lead Count
+          Max Lead Count
         </label>
         <div className="relative">
           <button

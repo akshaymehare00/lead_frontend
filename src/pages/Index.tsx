@@ -44,6 +44,7 @@ export default function Index() {
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null);
   const [renameSessionTitle, setRenameSessionTitle] = useState("");
   const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(true);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [isSearching, setIsSearching] = useState(false);
@@ -54,7 +55,6 @@ export default function Index() {
   const [currentStep, setCurrentStep] = useState(1);
   const [maxStepReached, setMaxStepReached] = useState(1);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
-  const [searchOpen, setSearchOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(true);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
@@ -85,6 +85,7 @@ export default function Index() {
 
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
+    setIsLoadingSessions(true);
     try {
       const { sessions: list } = await api.sessions.list();
       setSessions(
@@ -99,6 +100,8 @@ export default function Index() {
     } catch {
       setSessions([]);
       return [];
+    } finally {
+      setIsLoadingSessions(false);
     }
   }, []);
 
@@ -163,7 +166,6 @@ export default function Index() {
     setIsSearching(true);
     setSearchMeta(params);
     setCurrentStep(2);
-    setSearchOpen(false);
     setViewMode("results");
 
     try {
@@ -222,7 +224,6 @@ export default function Index() {
     setCurrentStep(1);
     setActiveLead(null);
     setActiveSessionId(null);
-    setSearchOpen(true);
     setSearchError(null);
   };
 
@@ -723,6 +724,7 @@ export default function Index() {
           <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
             <Sidebar
               sessions={sessions}
+              isLoading={isLoadingSessions}
               activeId={activeSessionId ?? ""}
               onSelect={(id) => setActiveSessionId(id)}
               onNew={handleNew}
@@ -793,34 +795,16 @@ export default function Index() {
         {/* Content row */}
         <div className="flex flex-1 min-h-0">
 
-          {/* Search sidebar — collapsible */}
-          <div className="flex-shrink-0 border-r border-border bg-surface-1 flex flex-col"
-            style={{ width: searchOpen ? 300 : 48, transition: "width 0.25s ease" }}
-          >
-            {/* Toggle */}
-            <button
-              onClick={() => setSearchOpen((v) => !v)}
-              className="flex items-center gap-2 px-3 py-3 border-b border-border text-muted-foreground hover:text-foreground transition-colors w-full"
-            >
-              <Zap className="w-4 h-4 text-primary flex-shrink-0" />
-              {searchOpen && (
-                <>
-                  <span className="text-xs font-semibold text-foreground flex-1 text-left">Search</span>
-                  <ChevronUp className="w-3.5 h-3.5" />
-                </>
-              )}
-            </button>
-            {searchOpen && (
-              <div className="flex-1 overflow-y-auto">
-                <SearchPanel onSearch={handleSearch} isSearching={isSearching} />
-              </div>
-            )}
-          </div>
-
           {/* Main content */}
           <div className="flex-1 overflow-y-auto min-w-0">
             {viewMode === "dashboard" ? (
-              <DashboardView onStatClick={navigateToLeadsList} />
+              <DashboardView
+                onStatClick={navigateToLeadsList}
+                onSearch={handleSearch}
+                isSearching={isSearching}
+                sessions={sessions}
+                onSelectSession={(id) => setActiveSessionId(id)}
+              />
             ) : viewMode === "leads-total" || viewMode === "leads-enriched" || viewMode === "leads-pending" ? (
               <LeadsListView
                 leads={leadsListData}
@@ -1861,50 +1845,72 @@ function EnrichmentView({
 }
 
 /* ─── Dashboard ─── */
-function DashboardView({ onStatClick }: { onStatClick?: (key: "totalLeads" | "enriched" | "pendingReview") => void }) {
+function DashboardView({
+  onStatClick,
+  onSearch,
+  isSearching,
+  sessions,
+  onSelectSession,
+}: {
+  onStatClick?: (key: "totalLeads" | "enriched" | "pendingReview") => void;
+  onSearch: (params: SearchParams) => void;
+  isSearching: boolean;
+  sessions: ChatSession[];
+  onSelectSession: (id: string) => void;
+}) {
   return (
-    <div className="p-8 space-y-8 max-w-5xl mx-auto animate-fade-in">
-      {/* Hero */}
-      <div className="rounded-2xl border border-primary/15 p-8 relative overflow-hidden"
+    <div className="p-6 md:p-8 max-w-5xl mx-auto animate-fade-in space-y-8">
+      {/* Hero + Search */}
+      <div className="rounded-2xl border border-primary/15 p-6 md:p-8 relative"
         style={{ background: "var(--gradient-hero)" }}>
-        <div className="absolute inset-0 pointer-events-none"
+        <div className="absolute inset-0 pointer-events-none rounded-2xl overflow-hidden"
           style={{ background: "radial-gradient(ellipse at 80% 40%, hsl(214 100% 58% / 0.1), transparent 60%)" }} />
-        <div className="relative">
-          <h1 className="text-3xl font-bold text-foreground">Lead Generation Portal</h1>
-          <p className="text-muted-foreground mt-1.5 text-sm">HK Exports · Jewellery Business Lead Finder</p>
-          <div className="flex flex-wrap items-center gap-6 mt-5">
-            {[
-              { icon: MapPin, text: "Search by location" },
-              { icon: Search, text: "6 business categories" },
-              { icon: Shield, text: "CRM duplicate check" },
-            ].map(({ icon: Icon, text }) => (
-              <div key={text} className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Icon className="w-4 h-4 text-primary" />
-                {text}
-              </div>
-            ))}
+        <div className="relative space-y-5">
+          <div>
+            <h1 className="text-2xl md:text-3xl font-bold text-foreground">Find New Leads</h1>
+            <p className="text-muted-foreground mt-1 text-sm">Search for diamond &amp; jewellery businesses to add to your pipeline</p>
           </div>
+          <SearchPanel onSearch={onSearch} isSearching={isSearching} compact />
         </div>
       </div>
 
       {/* Stats */}
       <StatsBar onStatClick={onStatClick} />
 
-      {/* Enrichment & CRM — where to see details */}
-      <div className="rounded-xl border border-border bg-card p-6">
-        <h2 className="text-lg font-semibold text-foreground flex items-center gap-2">
-          <Shield className="w-5 h-5 text-primary" />
-          Enrichment & CRM Check
-        </h2>
-        <p className="text-muted-foreground text-sm mt-2">
-          The stats above show totals across all time. To see CRM check status (Saved, Duplicate, New) and enrichment data (email, LinkedIn, etc.) for each lead:
-        </p>
-        <ul className="mt-3 text-sm text-muted-foreground space-y-1 list-disc list-inside">
-          <li>Select a search from <strong className="text-foreground">History</strong> in the sidebar</li>
-          <li>Each lead card shows its CRM status badge and an <strong className="text-warning">Enriched</strong> badge when data is collected</li>
-          <li>Click <strong className="text-foreground">View</strong> on a lead for full details including email, LinkedIn, Instagram</li>
-        </ul>
-      </div>
+      {/* Recent Sessions */}
+      {sessions.length > 0 && (
+        <div className="space-y-3">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-muted-foreground" />
+            Recent Searches
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {sessions.slice(0, 6).map((s) => (
+              <button
+                key={s.id}
+                onClick={() => onSelectSession(s.id)}
+                className="flex items-start gap-3 p-4 rounded-xl border border-border bg-card text-left transition-all hover:border-primary/30 hover:bg-primary/5 group"
+              >
+                <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Search className="w-4 h-4 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground truncate group-hover:text-primary transition-colors">{s.title}</p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-xs text-muted-foreground">{s.time}</span>
+                    {typeof s.leadCount === "number" && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                        {s.leadCount} leads
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-primary flex-shrink-0 mt-1 transition-colors" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

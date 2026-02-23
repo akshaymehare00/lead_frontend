@@ -10,6 +10,7 @@ export interface ChatSession {
 
 interface SidebarProps {
   sessions: ChatSession[];
+  isLoading?: boolean;
   activeId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
@@ -22,7 +23,7 @@ interface SidebarProps {
   onNavigateToCrmCheck?: () => void;
 }
 
-export const Sidebar = ({ sessions, activeId, onSelect, onNew, onDeleteSession, onRenameSession, userEmail, isAdmin, onLogout, onManageUsers, onNavigateToCrmCheck }: SidebarProps) => {
+export const Sidebar = ({ sessions, isLoading, activeId, onSelect, onNew, onDeleteSession, onRenameSession, userEmail, isAdmin, onLogout, onManageUsers, onNavigateToCrmCheck }: SidebarProps) => {
   return (
     <div className="flex flex-col h-full bg-sidebar border-r border-sidebar-border w-72 flex-shrink-0">
       {/* Logo */}
@@ -63,7 +64,24 @@ export const Sidebar = ({ sessions, activeId, onSelect, onNew, onDeleteSession, 
 
       {/* Sessions */}
       <div className="flex-1 overflow-y-auto px-3 space-y-0.5 pb-4">
-        {sessions.map((session) => {
+        {isLoading && sessions.length === 0 ? (
+          <div className="space-y-1 pt-1">
+            {[1, 2, 3, 4, 5].map((i) => (
+              <div key={i} className="flex items-start gap-3 px-3 py-2.5 rounded-lg animate-pulse">
+                <div className="w-3.5 h-3.5 rounded bg-sidebar-foreground/10 mt-0.5 flex-shrink-0" />
+                <div className="flex-1 min-w-0 space-y-2">
+                  <div className="h-3 rounded bg-sidebar-foreground/10" style={{ width: `${60 + (i * 7) % 30}%` }} />
+                  <div className="h-2.5 w-16 rounded bg-sidebar-foreground/8" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 px-4 text-center">
+            <p className="text-xs text-sidebar-foreground/40">No searches yet</p>
+            <p className="text-[10px] text-sidebar-foreground/30 mt-1">Start a new search to see history here</p>
+          </div>
+        ) : sessions.map((session) => {
           const active = session.id === activeId;
           return (
             <div

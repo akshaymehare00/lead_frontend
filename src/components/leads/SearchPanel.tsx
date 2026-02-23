@@ -38,9 +38,10 @@ function getCurrentPosition(): Promise<GeolocationPosition> {
 interface SearchPanelProps {
   onSearch: (params: SearchParams) => void;
   isSearching: boolean;
+  compact?: boolean;
 }
 
-export const SearchPanel = ({ onSearch, isSearching }: SearchPanelProps) => {
+export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps) => {
   const [mode, setMode] = useState<"natural" | "manual" | "near_me">("natural");
   const [query, setQuery] = useState("");
   const [location, setLocation] = useState("");
@@ -104,12 +105,13 @@ export const SearchPanel = ({ onSearch, isSearching }: SearchPanelProps) => {
         : coords !== null;
 
   return (
-    <div className="p-6 space-y-5">
-      {/* Header */}
-      <div className="flex items-center gap-2 mb-1">
-        <SlidersHorizontal className="w-4 h-4 text-primary" />
-        <span className="text-sm font-semibold text-foreground">Search Parameters</span>
-      </div>
+    <div className={compact ? "space-y-4" : "p-6 space-y-5"}>
+      {!compact && (
+        <div className="flex items-center gap-2 mb-1">
+          <SlidersHorizontal className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold text-foreground">Search Parameters</span>
+        </div>
+      )}
 
       {/* Tabs: Prompt / Manual / Near Me */}
       <div className="flex rounded-lg bg-secondary/30 border border-border p-1">

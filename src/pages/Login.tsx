@@ -76,14 +76,14 @@ export default function Login() {
                 Email
               </Label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none" />
                 <Input
                   id="email"
                   type="email"
                   placeholder="admin@gmail.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="pl-10 h-11 bg-secondary/50 border-border focus:ring-primary/30"
+                  className="pl-10 h-11 bg-secondary/50 border-border focus:ring-primary/30 relative z-10"
                   autoComplete="email"
                   disabled={isLoading}
                 />
@@ -95,14 +95,14 @@ export default function Login() {
                 Password
               </Label>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60 pointer-events-none" />
                 <Input
                   id="password"
                   type="password"
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pl-10 h-11 bg-secondary/50 border-border focus:ring-primary/30"
+                  className="pl-10 h-11 bg-secondary/50 border-border focus:ring-primary/30 relative z-10"
                   autoComplete="current-password"
                   disabled={isLoading}
                 />

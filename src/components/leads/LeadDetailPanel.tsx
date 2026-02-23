@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import {
   X, Star, Phone, Globe, MapPin, Clock, ExternalLink,
   CheckCircle2, Circle, Tag, User, Building2, Mail,
-  Linkedin, Instagram, FileText, ArrowRight, History
+  Linkedin, Instagram, FileText, ArrowRight, History, Trash2
 } from "lucide-react";
 import { Lead } from "./LeadCard";
 import { cn } from "@/lib/utils";
@@ -21,9 +21,10 @@ interface LeadDetailPanelProps {
   onLeadUpdated?: (lead: Lead) => void;
   onSaveLead?: () => void;
   onSkipLead?: () => void;
+  onRemoveLead?: () => void;
 }
 
-export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSkipLead }: LeadDetailPanelProps) => {
+export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSkipLead, onRemoveLead }: LeadDetailPanelProps) => {
   const [fullLead, setFullLead] = useState<{
     email?: string | null;
     linkedin?: string | null;
@@ -31,6 +32,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
     contactPerson?: string | null;
     designation?: string | null;
     crmStatus?: string;
+    isNew?: boolean;
     enrichmentSources?: { source: string; done: boolean }[];
   } | null>(null);
   const [leadHistory, setLeadHistory] = useState<LeadHistoryItem[]>([]);
@@ -47,6 +49,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
           contactPerson: l.contactPerson,
           designation: l.designation,
           crmStatus: l.crmStatus,
+          isNew: (!!l.crmCheckedAt || l.crmStatus === "SAVED") ? false : (l.isNew ?? undefined),
           enrichmentSources: l.enrichmentSources,
         })
       )
@@ -88,7 +91,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
           <div className="flex-1 min-w-0 pr-4">
             <div className="flex items-center gap-2 mb-1">
               {(() => {
-                const s = fullLead?.crmStatus ?? lead.crmStatus ?? (lead.isNew ? "NEW" : "");
+                const s = (fullLead?.isNew ?? lead.isNew) === false ? "SAVED" : (fullLead?.crmStatus ?? lead.crmStatus ?? (lead.isNew ? "NEW" : ""));
                 if (!s) return null;
                 const badges: Record<string, { label: string; cls: string }> = {
                   NEW: { label: "NEW", cls: "bg-primary/15 border-primary/30 text-primary" },
@@ -226,7 +229,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
               </div>
               <div>
                 <p className="text-xs font-semibold text-foreground">
-                  {fullLead?.crmStatus === "SAVED"
+                  {(fullLead?.isNew ?? lead.isNew) === false
                     ? "Saved to CRM"
                     : fullLead?.crmStatus === "DUPLICATE"
                     ? "Duplicate — exists in CRM"
@@ -241,7 +244,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
                 <p className="text-[11px] text-muted-foreground mt-0.5">
                   {fullLead?.crmStatus === "NEW" || lead.isNew
                     ? "Proceed to enrichment step"
-                    : fullLead?.crmStatus === "SAVED"
+                    : (fullLead?.isNew ?? lead.isNew) === false
                     ? "Successfully added to CRM"
                     : fullLead?.crmStatus === "DUPLICATE"
                     ? "Lead already exists — link to original"
@@ -253,22 +256,34 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
         </div>
 
         {/* Footer actions */}
-        <div className="p-4 border-t border-border bg-surface-1 flex gap-2">
-          <button
-            type="button"
-            onClick={() => onSkipLead?.()}
-            className="flex-1 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-secondary transition-all font-medium"
-          >
-            Skip Lead
-          </button>
-          <button
-            type="button"
-            onClick={() => onSaveLead?.()}
-            className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]"
-          >
-            Save to CRM
-            <ArrowRight className="w-4 h-4" />
-          </button>
+        <div className="p-4 border-t border-border bg-surface-1 flex flex-col gap-2">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => onSkipLead?.()}
+              className="flex-1 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground hover:bg-secondary transition-all font-medium"
+            >
+              Skip Lead
+            </button>
+            <button
+              type="button"
+              onClick={() => onSaveLead?.()}
+              className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-all flex items-center justify-center gap-2 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]"
+            >
+              Save to CRM
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+          {onRemoveLead && (
+            <button
+              type="button"
+              onClick={() => onRemoveLead()}
+              className="w-full py-2 rounded-lg border border-destructive/50 text-destructive text-sm hover:bg-destructive/10 transition-all font-medium flex items-center justify-center gap-2"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Remove Lead
+            </button>
+          )}
         </div>
       </div>
     </>

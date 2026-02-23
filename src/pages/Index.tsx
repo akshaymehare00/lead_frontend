@@ -13,11 +13,14 @@ import {
   MapPin, Search, Shield, Download,
   ChevronDown, ChevronUp, Layers, Zap,
   CheckCircle2, XCircle, Loader2, Phone, Globe, Star, RefreshCw, ArrowLeft,
-  CheckSquare, Square, ChevronRight
+  CheckSquare, Square,   ChevronRight, ChevronLeft,
+  PanelLeftClose, PanelLeftOpen,
+  AlertTriangle, Trash2
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
-import { api, toLead } from "@/lib/api";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { api, toLead, type CrmCheckSimilarMatch, type BulkCrmCheckOkItem } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { generateLeadsCsv, downloadCsv } from "@/lib/csv-export";
 
@@ -27,6 +30,7 @@ export interface CrmCheckLead extends Lead {
   crmStatus?: string;
   checkMessage?: string;
   duplicateOf?: { id: string; name: string; crmId: string };
+  similarMatches?: CrmCheckSimilarMatch[];
   isChecking?: boolean;
   checkedAt?: number;
 }
@@ -51,52 +55,33 @@ export default function Index() {
   const [maxStepReached, setMaxStepReached] = useState(1);
   const [activeLead, setActiveLead] = useState<Lead | null>(null);
   const [searchOpen, setSearchOpen] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(true);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [crmCheckLeads, setCrmCheckLeads] = useState<CrmCheckLead[]>([]);
   const [crmCheckSavingIds, setCrmCheckSavingIds] = useState<Set<string>>(new Set());
   const [crmCheckSelectedLeads, setCrmCheckSelectedLeads] = useState<Set<string>>(new Set());
   const [enrichmentSelectedLeads, setEnrichmentSelectedLeads] = useState<Set<string>>(new Set());
-  const [leadsCrmProcessed, setLeadsCrmProcessed] = useState<Set<string>>(new Set());
+  const [enrichmentLeads, setEnrichmentLeads] = useState<Lead[]>([]);
+  const [isLoadingEnrichment, setIsLoadingEnrichment] = useState(false);
+  const [isLoadingCrmCheck, setIsLoadingCrmCheck] = useState(false);
   const [leadsListData, setLeadsListData] = useState<Lead[]>([]);
   const [leadsListFilter, setLeadsListFilter] = useState<"all" | "enriched" | "pending">("all");
   const [isLoadingLeadsList, setIsLoadingLeadsList] = useState(false);
+  const [isSavingAndCheckDuplicate, setIsSavingAndCheckDuplicate] = useState(false);
 
   useEffect(() => {
     setMaxStepReached((prev) => Math.max(prev, currentStep));
   }, [currentStep]);
 
-  // Clear CRM/enrichment state when switching sessions
+  // Clear stage state when switching sessions
   useEffect(() => {
-    setLeadsCrmProcessed(new Set());
+    setCrmCheckLeads([]);
     setCrmCheckSelectedLeads(new Set());
+    setEnrichmentLeads([]);
     setEnrichmentSelectedLeads(new Set());
+    setMaxStepReached(2);
   }, [activeSessionId]);
-
-  // Sync CRM Check view: ONLY leads that have been saved, checked, or explicitly moved (not raw search results)
-  useEffect(() => {
-    if (viewMode !== "crm-check") return;
-    if (activeSessionId && leads.length > 0) {
-      const included = leads.filter((l) => {
-        const status = l.crmStatus ?? "";
-        if (status === "SAVED" || status === "DUPLICATE") return true;
-        return leadsCrmProcessed.has(l.id);
-      });
-      setCrmCheckLeads(
-        included.map((l) => {
-          const isMoved = leadsCrmProcessed.has(l.id) && !["SAVED", "DUPLICATE"].includes(l.crmStatus ?? "");
-          return {
-            ...l,
-            crmStatus: (isMoved ? "PENDING" : l.crmStatus) ?? "PENDING",
-            duplicateOf: l.duplicateOf,
-            checkedAt: l.crmStatus && l.crmStatus !== "PENDING" ? Date.now() : undefined,
-          };
-        })
-      );
-    } else if (!activeSessionId) {
-      setCrmCheckLeads([]);
-    }
-  }, [viewMode, activeSessionId, leads, leadsCrmProcessed]);
 
   // Fetch sessions
   const fetchSessions = useCallback(async () => {
@@ -127,7 +112,7 @@ export default function Index() {
     return () => { mounted = false; };
   }, [fetchSessions]);
 
-  // Load session leads when activeSessionId changes
+  // Load session leads (all leads for Results view) when activeSessionId changes
   useEffect(() => {
     if (!activeSessionId) {
       setLeads([]);
@@ -147,17 +132,27 @@ export default function Index() {
         setSearchMeta(
           session.mode === "NATURAL"
             ? { mode: "natural", query: session.title, maxLead: session.leadCount }
-            : {
-                mode: "manual",
-                location: session.location ?? "",
-                categories: session.categories,
-                maxLead: session.leadCount,
-              }
+            : session.mode === "CURRENT_LOCATION"
+              ? { mode: "current_location", latitude: 0, longitude: 0, radiusKm: 25, maxLead: session.leadCount }
+              : {
+                  mode: "manual",
+                  location: session.location ?? "",
+                  categories: session.categories,
+                  maxLead: session.leadCount,
+                }
         );
         setViewMode("results");
-        setCurrentStep(3);
-        const hasCrmData = (session.savedCount ?? 0) > 0 || (session.duplicateCount ?? 0) > 0;
-        if (hasCrmData) setMaxStepReached((prev) => Math.max(prev, 5));
+        setCurrentStep(2);
+        // Any session with leads should allow navigating to all workflow stages
+        // so the user can click and fetch data from the backend for each stage
+        if (session.leads.length > 0) {
+          const maxLeadStep = Math.max(0, ...session.leads.map((l) => l.currentStep ?? 0));
+          let uiMax = 4; // Enable up to Enrichment for any session with leads
+          if (maxLeadStep >= 7) uiMax = 5;
+          setMaxStepReached(uiMax);
+        } else {
+          setMaxStepReached(2);
+        }
       })
       .catch(() => setLeads([]))
       .finally(() => setIsLoadingSession(false));
@@ -182,7 +177,7 @@ export default function Index() {
         if (status.status === "COMPLETED" && status.leads) {
           setLeads(status.leads.map(toLead));
           setIsSearching(false);
-          setCurrentStep(3);
+          setCurrentStep(2);
           setActiveSessionId(searchSessionId);
           fetchSessions();
         } else if (status.status === "FAILED") {
@@ -256,7 +251,7 @@ export default function Index() {
       }));
       const savedIds = res.results.map((r) => r.leadId);
       setLeadsCrmProcessed((prev) => new Set([...prev, ...savedIds]));
-      setMaxStepReached((prev) => Math.max(prev, 4));
+      setMaxStepReached((prev) => Math.max(prev, 3));
       toast({ title: "Saved", description: `${res.saved} lead(s) saved to CRM` });
     } catch (err) {
       toast({
@@ -280,25 +275,78 @@ export default function Index() {
 
   const handleClearSelection = () => setSelectedLeads(new Set());
 
+  const fetchCrmCheckLeads = useCallback(async () => {
+    if (!activeSessionId) return;
+    setIsLoadingCrmCheck(true);
+    try {
+      const session = await api.sessions.get(activeSessionId, "crm_check");
+      const mapped: CrmCheckLead[] = session.leads.map((l) => {
+        const lead = toLead(l);
+        return {
+          ...lead,
+          crmStatus: ["NEW", "DUPLICATE", "FOUND_SIMILAR"].includes(l.crmStatus ?? "")
+            ? l.crmStatus!
+            : "PENDING",
+          duplicateOf: lead.duplicateOf,
+          similarMatches: lead.similarMatches ?? [],
+          checkMessage: undefined,
+          checkedAt: lead.checkedAt ?? (l.crmCheckedAt ? Date.parse(l.crmCheckedAt) : undefined),
+        };
+      });
+      setCrmCheckLeads(mapped);
+      setSessionCrmStats({
+        savedCount: session.savedCount,
+        duplicateCount: session.duplicateCount,
+      });
+    } catch {
+      setCrmCheckLeads([]);
+    } finally {
+      setIsLoadingCrmCheck(false);
+    }
+  }, [activeSessionId]);
+
+  const fetchEnrichmentLeads = useCallback(async () => {
+    if (!activeSessionId) return;
+    setIsLoadingEnrichment(true);
+    try {
+      const session = await api.sessions.get(activeSessionId, "enrichment");
+      setEnrichmentLeads(session.leads.map(toLead));
+    } catch {
+      setEnrichmentLeads([]);
+    } finally {
+      setIsLoadingEnrichment(false);
+    }
+  }, [activeSessionId]);
+
   const navigateToCrmCheck = () => {
     setViewMode("crm-check");
-    setCurrentStep(4);
+    setCurrentStep(3);
+    fetchCrmCheckLeads();
   };
 
-  const navigateToEnrichment = async () => {
+  const moveToEnrichment = async (leadIds: string[]) => {
+    if (leadIds.length === 0) return;
     setCrmCheckSelectedLeads(new Set());
-    const enrichmentLeads = leads.filter(
-      (l) => (l.crmStatus ?? "") === "SAVED" || (l.crmStatus ?? "") === "NEW"
-    );
-    setViewMode("enrichment");
-    setCurrentStep(5);
-    setMaxStepReached((prev) => Math.max(prev, 5));
     try {
-      await Promise.all(
-        enrichmentLeads.map((l) => api.leads.updateStep(l.id, 5).catch(() => null))
-      );
-    } catch {
-      // Ignore persistence errors
+      const res = await api.leads.moveToEnrichment(leadIds);
+      const total = res.moved + res.skipped;
+      toast({
+        title: "Enrichment",
+        description: total > 0
+          ? `${res.moved} moved${res.skipped > 0 ? `, ${res.skipped} already in enrichment` : ""}${res.failed > 0 ? `, ${res.failed} failed` : ""}.`
+          : `${res.failed} failed to move.`,
+      });
+      setViewMode("enrichment");
+      setCurrentStep(4);
+      setMaxStepReached((prev) => Math.max(prev, 4));
+      // Fetch enrichment leads fresh from backend
+      await fetchEnrichmentLeads();
+    } catch (err) {
+      toast({
+        title: "Move failed",
+        description: err instanceof Error ? err.message : "Failed to move leads to enrichment",
+        variant: "destructive",
+      });
     }
   };
 
@@ -306,8 +354,8 @@ export default function Index() {
     const ids = Array.from(enrichmentSelectedLeads);
     setEnrichmentSelectedLeads(new Set());
     setViewMode("results");
-    setCurrentStep(6);
-    setMaxStepReached((prev) => Math.max(prev, 6));
+    setCurrentStep(5);
+    setMaxStepReached((prev) => Math.max(prev, 5));
     try {
       await Promise.all(ids.map((id) => api.leads.updateStep(id, 6).catch(() => null)));
     } catch {
@@ -378,64 +426,33 @@ export default function Index() {
   const runCrmCheckForSelected = async () => {
     const ids = Array.from(crmCheckSelectedLeads);
     if (ids.length === 0) return;
-    const toCheck = crmCheckLeads.filter((l) => ids.includes(l.id));
-    for (const lead of toCheck) {
-      await runCrmCheck(lead);
-    }
+    await runBulkCrmCheck(ids);
   };
 
-  const handleSaveAndCheckDuplicate = async () => {
+  const handleMoveToCrmCheck = async () => {
     const ids = Array.from(selectedLeads);
     if (ids.length === 0) return;
+    setIsSavingAndCheckDuplicate(true);
     setSelectedLeads(new Set());
     try {
-      const res = await api.leads.saveToCrm(ids);
-      const duplicateCount = res.results.filter((r) => r.status?.toUpperCase() === "DUPLICATE").length;
-      setLeads((prev) =>
-        prev.map((l) => {
-          if (!ids.includes(l.id)) return l;
-          const r = res.results.find((x) => x.leadId === l.id);
-          const status = r?.status?.toUpperCase();
-          return {
-            ...l,
-            isNew: status !== "SAVED",
-            crmStatus: status === "SAVED" ? "SAVED" : status === "DUPLICATE" ? "DUPLICATE" : "PENDING",
-          };
-        })
-      );
-      setSessionCrmStats((prev) => ({
-        ...prev,
-        savedCount: (prev.savedCount ?? 0) + res.saved,
-        duplicateCount: (prev.duplicateCount ?? 0) + duplicateCount,
-      }));
-      setLeadsCrmProcessed((prev) => new Set([...prev, ...ids]));
-      const selectedLeadsData = leads
-        .filter((l) => ids.includes(l.id))
-        .sort((a, b) => a.rank - b.rank)
-        .map((l) => {
-          const r = res.results.find((x) => x.leadId === l.id);
-          const status = r?.status?.toUpperCase();
-          return {
-            ...l,
-            crmStatus: status === "SAVED" ? "SAVED" : status === "DUPLICATE" ? "DUPLICATE" : "PENDING",
-            checkedAt: status ? Date.now() : undefined,
-          } as CrmCheckLead;
-        });
-      setCrmCheckLeads((prev) => [...prev, ...selectedLeadsData]);
-      setViewMode("crm-check");
-      setCurrentStep(4);
-      setMaxStepReached((prev) => Math.max(prev, 4));
-      fetchSessions();
+      const res = await api.leads.moveToCrmCheck(ids);
       toast({
-        title: "Saved & moved",
-        description: `${res.saved} saved to CRM${duplicateCount > 0 ? `, ${duplicateCount} duplicate(s) flagged` : ""}.`,
+        title: "Moved to CRM Check",
+        description: `${res.moved} moved${res.skipped > 0 ? `, ${res.skipped} skipped` : ""}${res.failed > 0 ? `, ${res.failed} failed` : ""}.`,
       });
+      setViewMode("crm-check");
+      setCurrentStep(3);
+      setMaxStepReached((prev) => Math.max(prev, 3));
+      await fetchCrmCheckLeads();
+      fetchSessions();
     } catch (err) {
       toast({
         title: "Failed",
-        description: err instanceof Error ? err.message : "Could not save to CRM",
+        description: err instanceof Error ? err.message : "Could not move to CRM Check",
         variant: "destructive",
       });
+    } finally {
+      setIsSavingAndCheckDuplicate(false);
     }
   };
 
@@ -447,6 +464,11 @@ export default function Index() {
       const res = await api.leads.crmCheck(lead.id, {
         phone: lead.phone,
         website: lead.website,
+        email: lead.email,
+        name: lead.name,
+        address: lead.address,
+        category: lead.category,
+        contactPerson: lead.contactPerson,
       });
       setCrmCheckLeads((prev) =>
         prev.map((l) =>
@@ -455,25 +477,14 @@ export default function Index() {
                 ...l,
                 crmStatus: res.crmStatus,
                 checkMessage: res.message,
-                duplicateOf: res.duplicateOf as { id: string; name: string; crmId: string } | undefined,
+                duplicateOf: res.duplicateOf ?? undefined,
+                similarMatches: res.similarMatches ?? [],
                 isChecking: false,
                 checkedAt: Date.now(),
               }
             : l
         )
       );
-      setLeads((prev) =>
-        prev.map((l) =>
-          l.id === lead.id
-            ? {
-                ...l,
-                crmStatus: res.crmStatus,
-                duplicateOf: res.duplicateOf as { id: string; name: string; crmId: string } | undefined,
-              }
-            : l
-        )
-      );
-      setLeadsCrmProcessed((prev) => new Set([...prev, lead.id]));
       toast({
         title: res.crmStatus === "NEW" ? "New lead" : "Duplicate found",
         description: res.message,
@@ -490,13 +501,77 @@ export default function Index() {
     }
   };
 
-  const runAllCrmChecks = async () => {
-    const pending = crmCheckLeads.filter(
-      (l) => l.crmStatus === "PENDING" || !l.checkedAt
+  const runBulkCrmCheck = async (leadIds: string[]) => {
+    if (leadIds.length === 0) return;
+    const idsSet = new Set(leadIds);
+    setCrmCheckLeads((prev) =>
+      prev.map((l) => (idsSet.has(l.id) ? { ...l, isChecking: true } : l))
     );
-    for (const lead of pending) {
-      await runCrmCheck(lead);
+    try {
+      const BULK_CHUNK = 100;
+      const chunks = Array.from(
+        { length: Math.ceil(leadIds.length / BULK_CHUNK) },
+        (_, i) => leadIds.slice(i * BULK_CHUNK, (i + 1) * BULK_CHUNK)
+      );
+      let totalOk = 0;
+      let totalFailed = 0;
+      let dupCount = 0;
+      for (const chunk of chunks) {
+        const res = await api.leads.bulkCrmCheck(chunk);
+        totalOk += res.ok;
+        totalFailed += res.failed;
+        dupCount += res.results.filter(
+          (r) => r.status === "OK" && r.crmStatus === "DUPLICATE"
+        ).length;
+        const resultsById = new Map(
+          res.results.filter((r) => r.status === "OK").map((r) => [r.leadId, r as BulkCrmCheckOkItem])
+        );
+        setCrmCheckLeads((prev) =>
+          prev.map((l) => {
+            if (!idsSet.has(l.id)) return l;
+            const r = resultsById.get(l.id);
+            if (!r) return { ...l, isChecking: false };
+            return {
+              ...l,
+              crmStatus: r.crmStatus,
+              checkMessage: r.message,
+              duplicateOf: r.duplicateOf ?? undefined,
+              similarMatches: r.similarMatches ?? [],
+              isChecking: true,
+              checkedAt: Date.now(),
+            };
+          })
+        );
+      }
+      setCrmCheckLeads((prev) =>
+        prev.map((l) => (idsSet.has(l.id) ? { ...l, isChecking: false } : l))
+      );
+      toast({
+        title: "Bulk check complete",
+        description: `${totalOk} checked${totalFailed > 0 ? `, ${totalFailed} failed` : ""}${dupCount > 0 ? ` · ${dupCount} duplicate(s)` : ""}.`,
+      });
+    } catch (err) {
+      setCrmCheckLeads((prev) =>
+        prev.map((l) => (idsSet.has(l.id) ? { ...l, isChecking: false } : l))
+      );
+      toast({
+        title: "Bulk check failed",
+        description: err instanceof Error ? err.message : "Failed to run bulk duplicate check",
+        variant: "destructive",
+      });
     }
+  };
+
+  const runAllCrmChecks = async () => {
+    const allIds = crmCheckLeads.map((l) => l.id);
+    if (allIds.length === 0) {
+      toast({
+        title: "No leads to check",
+        description: "Add leads first.",
+      });
+      return;
+    }
+    await runBulkCrmCheck(allIds);
   };
 
   const handleCrmCheckSaveToCrm = async (leadIds: string[]) => {
@@ -506,19 +581,13 @@ export default function Index() {
       const res = await api.leads.saveToCrm(leadIds);
       setCrmCheckLeads((prev) =>
         prev.map((l) =>
-          leadIds.includes(l.id) ? { ...l, crmStatus: "SAVED", checkedAt: Date.now() } : l
-        )
-      );
-      setLeads((prev) =>
-        prev.map((l) =>
-          leadIds.includes(l.id) ? { ...l, isNew: false, crmStatus: "SAVED" } : l
+          leadIds.includes(l.id) ? { ...l, isNew: false } : l
         )
       );
       setSessionCrmStats((prev) => ({
         ...prev,
         savedCount: (prev.savedCount ?? 0) + res.saved,
       }));
-      setLeadsCrmProcessed((prev) => new Set([...prev, ...leadIds]));
       setMaxStepReached((prev) => Math.max(prev, 4));
       toast({ title: "Saved", description: `${res.saved} lead(s) saved to CRM` });
       fetchSessions();
@@ -571,25 +640,106 @@ export default function Index() {
     if (activeLead?.id === updated.id) setActiveLead(updated);
   };
 
+  const [isRemovingLeads, setIsRemovingLeads] = useState(false);
+
+  const handleRemoveLeads = async (leadIds: string[]) => {
+    if (leadIds.length === 0) return;
+    setIsRemovingLeads(true);
+    try {
+      const REMOVE_CHUNK = 100;
+      const chunks = Array.from(
+        { length: Math.ceil(leadIds.length / REMOVE_CHUNK) },
+        (_, i) => leadIds.slice(i * REMOVE_CHUNK, (i + 1) * REMOVE_CHUNK)
+      );
+      let totalRemoved = 0;
+      for (const chunk of chunks) {
+        const res = await api.leads.removeBulk(chunk);
+        totalRemoved += res.removed;
+      }
+      const idsSet = new Set(leadIds);
+      setLeads((prev) => prev.filter((l) => !idsSet.has(l.id)));
+      setCrmCheckLeads((prev) => prev.filter((l) => !idsSet.has(l.id)));
+      setEnrichmentLeads((prev) => prev.filter((l) => !idsSet.has(l.id)));
+      setSelectedLeads((prev) => {
+        const next = new Set(prev);
+        leadIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      setCrmCheckSelectedLeads((prev) => {
+        const next = new Set(prev);
+        leadIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      setEnrichmentSelectedLeads((prev) => {
+        const next = new Set(prev);
+        leadIds.forEach((id) => next.delete(id));
+        return next;
+      });
+      if (activeLead && idsSet.has(activeLead.id)) setActiveLead(null);
+      const failed = leadIds.length - totalRemoved;
+      toast({
+        title: "Removed",
+        description: `${totalRemoved} lead(s) removed${failed > 0 ? `, ${failed} failed` : ""}.`,
+      });
+      fetchSessions();
+    } catch (err) {
+      toast({
+        title: "Remove failed",
+        description: err instanceof Error ? err.message : "Failed to remove leads",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRemovingLeads(false);
+    }
+  };
+
   return (
     <div className="flex h-screen bg-background overflow-hidden">
-      {/* Narrow sidebar */}
-      <Sidebar
-        sessions={sessions}
-        activeId={activeSessionId ?? ""}
-        onSelect={(id) => setActiveSessionId(id)}
-        onNew={handleNew}
-        onDeleteSession={handleDeleteSession}
-        onRenameSession={(id, title) => {
-          setRenameSessionId(id);
-          setRenameSessionTitle(title);
-        }}
-        userEmail={user?.email}
-        isAdmin={isAdmin}
-        onLogout={logout}
-        onManageUsers={isAdmin ? () => setManageUsersOpen(true) : undefined}
-        onNavigateToCrmCheck={navigateToCrmCheck}
-      />
+      {/* History sidebar — collapsible */}
+      <div
+        className="flex-shrink-0 flex flex-col border-r border-border bg-sidebar transition-[width] duration-250 ease-in-out relative"
+        style={{ width: historyOpen ? 288 : 48 }}
+      >
+        <button
+          onClick={() => setHistoryOpen((v) => !v)}
+          title={historyOpen ? "Close history" : "Open history"}
+          className={cn(
+            "flex items-center justify-center gap-2 py-3 transition-all flex-shrink-0 w-full",
+            historyOpen
+              ? "border-b border-sidebar-border text-sidebar-foreground/70 hover:text-sidebar-accent-foreground hover:bg-sidebar-accent/30 px-4"
+              : "rounded-r-lg bg-primary/10 text-primary border-y border-r border-border hover:bg-primary/20"
+          )}
+        >
+          {historyOpen ? (
+            <>
+              <PanelLeftClose className="w-4 h-4 flex-shrink-0" />
+              <span className="text-xs font-medium">History</span>
+            </>
+          ) : (
+            <PanelLeftOpen className="w-5 h-5 flex-shrink-0" />
+          )}
+        </button>
+        {historyOpen && (
+          <div className="flex-1 min-w-0 overflow-hidden flex flex-col">
+            <Sidebar
+              sessions={sessions}
+              activeId={activeSessionId ?? ""}
+              onSelect={(id) => setActiveSessionId(id)}
+              onNew={handleNew}
+              onDeleteSession={handleDeleteSession}
+              onRenameSession={(id, title) => {
+                setRenameSessionId(id);
+                setRenameSessionTitle(title);
+              }}
+              userEmail={user?.email}
+              isAdmin={isAdmin}
+              onLogout={logout}
+              onManageUsers={isAdmin ? () => setManageUsersOpen(true) : undefined}
+              onNavigateToCrmCheck={navigateToCrmCheck}
+            />
+          </div>
+        )}
+      </div>
 
       <ManageUsersSheet
         open={manageUsersOpen}
@@ -619,15 +769,18 @@ export default function Index() {
               onStepClick={(stepId) => {
                 setCurrentStep(stepId);
                 if (stepId === 1) setViewMode("dashboard");
-                else if (stepId === 2 || stepId === 3) {
+                else if (stepId === 2) setViewMode("results");
+                else if (stepId === 3) navigateToCrmCheck();
+                else if (stepId === 4) {
+                  setViewMode("enrichment");
+                  setCurrentStep(4);
+                  setMaxStepReached((prev) => Math.max(prev, 4));
+                  fetchEnrichmentLeads();
+                }
+                else if (stepId >= 5) {
                   setViewMode("results");
-                  if (stepId === 2) setSearchOpen(true);
-                } else if (stepId === 4) navigateToCrmCheck();
-                else if (stepId === 5) navigateToEnrichment();
-                else if (stepId >= 6) {
-                  setViewMode("results");
-                  setCurrentStep(6);
-                  setMaxStepReached((prev) => Math.max(prev, 6));
+                  setCurrentStep(stepId);
+                  setMaxStepReached((prev) => Math.max(prev, stepId));
                 }
               }}
             />
@@ -678,19 +831,23 @@ export default function Index() {
               />
             ) : viewMode === "enrichment" ? (
               <EnrichmentView
-                leads={leads.filter((l) => (l.crmStatus ?? "") === "SAVED" || (l.crmStatus ?? "") === "NEW")}
+                leads={enrichmentLeads}
+                isLoading={isLoadingEnrichment}
                 selectedLeads={enrichmentSelectedLeads}
                 savingIds={crmCheckSavingIds}
                 onToggle={toggleEnrichmentLead}
                 onClearSelection={() => setEnrichmentSelectedLeads(new Set())}
                 onSaveToCrm={handleCrmCheckSaveToCrm}
-                onBack={() => { setViewMode("crm-check"); setCurrentStep(4); }}
+                onRemoveLeads={handleRemoveLeads}
+                isRemoving={isRemovingLeads}
+                onBack={() => { setViewMode("crm-check"); setCurrentStep(3); }}
                 onNavigateToCollectDetails={navigateToCollectDetails}
                 onViewLead={setActiveLead}
               />
             ) : viewMode === "crm-check" ? (
               <CrmCheckView
                 leads={crmCheckLeads}
+                isLoading={isLoadingCrmCheck}
                 savingIds={crmCheckSavingIds}
                 selectedLeads={crmCheckSelectedLeads}
                 sessionCrmStats={sessionCrmStats}
@@ -698,10 +855,12 @@ export default function Index() {
                 onRunAllChecks={runAllCrmChecks}
                 onRunCheckForSelected={runCrmCheckForSelected}
                 onSaveToCrm={handleCrmCheckSaveToCrm}
+                onRemoveLeads={handleRemoveLeads}
+                isRemoving={isRemovingLeads}
                 onToggle={toggleCrmCheckLead}
                 onClearSelection={() => setCrmCheckSelectedLeads(new Set())}
-                onBack={() => { setViewMode("results"); setCurrentStep(3); }}
-                onNavigateToEnrichment={navigateToEnrichment}
+                onBack={() => { setViewMode("results"); setCurrentStep(2); }}
+                onMoveToEnrichment={moveToEnrichment}
               />
             ) : (
               <ResultsView
@@ -716,8 +875,11 @@ export default function Index() {
                 isLoadingSession={isLoadingSession}
                 searchError={searchError}
                 onSaveToCrm={handleSaveToCrm}
-                onSaveAndCheckDuplicate={handleSaveAndCheckDuplicate}
+                onMoveToCrmCheck={handleMoveToCrmCheck}
+                isMovingToCrmCheck={isSavingAndCheckDuplicate}
                 onExport={handleExport}
+                onRemoveLeads={handleRemoveLeads}
+                isRemoving={isRemovingLeads}
                 onClearSelection={handleClearSelection}
               />
             )}
@@ -732,6 +894,7 @@ export default function Index() {
           onClose={() => setActiveLead(null)}
           onLeadUpdated={handleLeadUpdated}
           onSaveLead={() => handleSaveToCrm([activeLead.id])}
+          onRemoveLead={() => handleRemoveLeads([activeLead.id])}
           onSkipLead={async () => {
             try {
               await api.leads.skip(activeLead.id);
@@ -752,11 +915,12 @@ export default function Index() {
   );
 }
 
-type CrmCheckFilter = "all" | "to-save" | "saved" | "duplicate";
+type CrmCheckFilter = "all" | "to-save" | "saved" | "duplicate" | "similar";
 
 /* ─── CRM Duplicate Check View ─── */
 function CrmCheckView({
   leads,
+  isLoading: isLoadingStage,
   savingIds,
   selectedLeads,
   sessionCrmStats,
@@ -764,12 +928,15 @@ function CrmCheckView({
   onRunAllChecks,
   onRunCheckForSelected,
   onSaveToCrm,
+  onRemoveLeads,
+  isRemoving,
   onToggle,
   onClearSelection,
   onBack,
-  onNavigateToEnrichment,
+  onMoveToEnrichment,
 }: {
   leads: CrmCheckLead[];
+  isLoading?: boolean;
   savingIds: Set<string>;
   selectedLeads: Set<string>;
   sessionCrmStats: { savedCount?: number; duplicateCount?: number };
@@ -777,36 +944,61 @@ function CrmCheckView({
   onRunAllChecks: () => Promise<void>;
   onRunCheckForSelected: () => Promise<void>;
   onSaveToCrm: (leadIds: string[]) => Promise<void>;
+  onRemoveLeads: (leadIds: string[]) => void;
+  isRemoving?: boolean;
   onToggle: (id: string) => void;
   onClearSelection: () => void;
   onBack: () => void;
-  onNavigateToEnrichment: () => void;
+  onMoveToEnrichment: (leadIds: string[]) => void;
 }) {
   const [filter, setFilter] = useState<CrmCheckFilter>("all");
+  const [duplicateSimilarLead, setDuplicateSimilarLead] = useState<CrmCheckLead | null>(null);
 
-  const pendingCount = leads.filter((l) => l.crmStatus === "PENDING" || !l.checkedAt).length;
-  const savedCount = leads.filter((l) => l.crmStatus === "SAVED").length;
-  const duplicateCount = leads.filter((l) => l.crmStatus === "DUPLICATE").length;
-  const toSaveCount = leads.filter(
-    (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW"
+  const isChecking = leads.some((l) => l.isChecking);
+  const isSaving = savingIds.size > 0;
+  const isCrmCheckLoading = isChecking || isSaving || isRemoving;
+
+  const pendingCount = leads.filter(
+    (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === undefined
   ).length;
-  const saveableLeads = leads.filter((l) => l.crmStatus === "NEW" && !savingIds.has(l.id));
+  const savedCount = leads.filter((l) => l.isNew === false).length;
+  const duplicateCount = leads.filter((l) => l.crmStatus === "DUPLICATE").length;
+  const similarCount = leads.filter(
+    (l) => (l.similarMatches?.length ?? 0) > 0 && !l.duplicateOf
+  ).length;
+  const toSaveCount = leads.filter(
+    (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR"
+  ).length;
+  const saveableLeads = leads.filter(
+    (l) => (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && l.isNew !== false && !savingIds.has(l.id)
+  );
   const hasSaveable = saveableLeads.length > 0;
 
   const filteredLeads = (() => {
     switch (filter) {
       case "to-save":
         return leads.filter(
-          (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW"
+          (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR"
         );
       case "saved":
-        return leads.filter((l) => l.crmStatus === "SAVED");
+        return leads.filter((l) => l.isNew === false);
       case "duplicate":
         return leads.filter((l) => l.crmStatus === "DUPLICATE");
+      case "similar":
+        return leads.filter((l) => (l.similarMatches?.length ?? 0) > 0 && !l.duplicateOf);
       default:
         return leads;
     }
   })();
+
+  if (isLoadingStage) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center h-full text-center">
+        <Loader2 className="w-10 h-10 text-primary animate-spin mb-3" />
+        <p className="text-sm font-medium text-foreground">Loading CRM Check leads...</p>
+      </div>
+    );
+  }
 
   if (leads.length === 0) {
     return (
@@ -827,7 +1019,20 @@ function CrmCheckView({
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto animate-slide-up">
+    <div className="p-6 max-w-4xl mx-auto animate-slide-up relative">
+      {/* Loading overlay */}
+      {isCrmCheckLoading && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm rounded-xl min-h-[200px]">
+          <Loader2 className="w-10 h-10 text-primary animate-spin mb-3" />
+          <p className="text-sm font-medium text-foreground">
+            {isChecking ? "Checking for duplicates..." : "Saving to CRM..."}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {isChecking ? "Please wait" : `${savingIds.size} lead(s) being saved`}
+          </p>
+        </div>
+      )}
+
       {/* Header bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
         <div className="flex items-center gap-3">
@@ -844,8 +1049,14 @@ function CrmCheckView({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => onRunAllChecks()} className="gap-2">
-            <RefreshCw className="w-4 h-4" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onRunAllChecks()}
+            disabled={isCrmCheckLoading}
+            className="gap-2"
+          >
+            {isChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
             Check All for Duplicate
           </Button>
           {selectedLeads.size > 0 && (
@@ -853,20 +1064,23 @@ function CrmCheckView({
               variant="outline"
               size="sm"
               onClick={() => onRunCheckForSelected()}
+              disabled={isCrmCheckLoading}
               className="gap-2"
             >
-              <Search className="w-4 h-4" />
+              {isChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               Check Duplicate for Selected ({selectedLeads.size})
             </Button>
           )}
-          {hasSaveable && (
+          {selectedLeads.size > 0 && (
             <Button
+              variant="outline"
               size="sm"
-              onClick={() => onSaveToCrm(saveableLeads.map((l) => l.id))}
-              className="gap-2"
+              onClick={() => onRemoveLeads(Array.from(selectedLeads))}
+              disabled={isCrmCheckLoading}
+              className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              Save {saveableLeads.length} to CRM
+              {isRemoving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+              Remove Selected ({selectedLeads.size})
             </Button>
           )}
         </div>
@@ -896,9 +1110,10 @@ function CrmCheckView({
             onClick={() => {
               const filtered = (() => {
                 switch (filter) {
-                  case "to-save": return leads.filter((l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW");
-                  case "saved": return leads.filter((l) => l.crmStatus === "SAVED");
+                  case "to-save": return leads.filter((l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR");
+                  case "saved": return leads.filter((l) => l.isNew === false);
                   case "duplicate": return leads.filter((l) => l.crmStatus === "DUPLICATE");
+                  case "similar": return leads.filter((l) => (l.similarMatches?.length ?? 0) > 0 && !l.duplicateOf);
                   default: return leads;
                 }
               })();
@@ -919,6 +1134,7 @@ function CrmCheckView({
             { id: "to-save" as const, label: "To Save", count: toSaveCount },
             { id: "saved" as const, label: "Saved", count: savedCount },
             { id: "duplicate" as const, label: "Duplicate", count: duplicateCount },
+            { id: "similar" as const, label: "Found Similar", count: similarCount },
           ] as const
         ).map(({ id, label, count }) => (
           <button
@@ -948,7 +1164,7 @@ function CrmCheckView({
         {filteredLeads.length === 0 ? (
           <div className="py-12 text-center rounded-xl border border-dashed border-border bg-muted/30">
             <p className="text-sm text-muted-foreground">
-              {filter === "all" ? "No leads" : `No leads match &quot;${filter === "to-save" ? "To Save" : filter === "saved" ? "Saved" : "Duplicate"}&quot; filter`}
+              {filter === "all" ? "No leads" : `No leads match "${filter === "to-save" ? "To Save" : filter === "saved" ? "Saved" : filter === "duplicate" ? "Duplicate" : "Found Similar"}" filter`}
             </p>
             {filter !== "all" && (
               <button
@@ -969,8 +1185,9 @@ function CrmCheckView({
               "rounded-xl border p-5 bg-card transition-all cursor-pointer",
               selectedLeads.has(lead.id) && "ring-2 ring-primary/50 border-primary/40 bg-primary/5",
               lead.crmStatus === "NEW" && !selectedLeads.has(lead.id) && "border-primary/30 bg-primary/5",
+              lead.crmStatus === "FOUND_SIMILAR" && !selectedLeads.has(lead.id) && "border-amber-500/20 bg-amber-500/5",
               lead.crmStatus === "DUPLICATE" && !selectedLeads.has(lead.id) && "border-destructive/30 bg-destructive/5",
-              lead.crmStatus === "SAVED" && !selectedLeads.has(lead.id) && "border-success/30 bg-success/5"
+              lead.isNew === false && !selectedLeads.has(lead.id) && "border-success/30 bg-success/5"
             )}
           >
             <div className="flex flex-col sm:flex-row sm:items-start gap-4">
@@ -998,7 +1215,12 @@ function CrmCheckView({
                       )}
                     </div>
                   </div>
-                  <CrmCheckStatusBadge status={lead.crmStatus} />
+                  <CrmCheckStatusBadge lead={lead} />
+                  {(lead.crmStatus === "NEW" || lead.crmStatus === "FOUND_SIMILAR") && (lead.checkedAt || lead.crmCheckedAt) && !lead.duplicateOf && lead.isNew === false && (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-success/15 border-success/30 text-success">
+                      {lead.similarMatches?.length ? "Review similar, then enrich" : "Proceed to Enrichment"}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-4 space-y-2 text-sm text-muted-foreground">
                   {lead.address && (
@@ -1027,66 +1249,77 @@ function CrmCheckView({
                     </div>
                   )}
                 </div>
-                {lead.duplicateOf && (
-                  <div className="mt-3 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-sm">
-                    <p className="font-medium text-destructive">Duplicate of:</p>
-                    <p className="text-foreground">{lead.duplicateOf.name}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      CRM ID: {lead.duplicateOf.crmId}
-                    </p>
-                  </div>
-                )}
                 {lead.checkMessage && !lead.duplicateOf && (
                   <p className="mt-2 text-xs text-muted-foreground">{lead.checkMessage}</p>
+                )}
+                {/* Enrichment sources status (from session API) */}
+                {lead.enrichmentSources && lead.enrichmentSources.length > 0 && (
+                  <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                    {lead.enrichmentSources.map((s) => (
+                      <span
+                        key={s.source}
+                        className={cn(
+                          "text-[10px] px-1.5 py-0.5 rounded border font-medium",
+                          s.done ? "bg-success/10 border-success/30 text-success" : "bg-muted/50 border-border text-muted-foreground"
+                        )}
+                        title={s.done ? "Done" : "Pending"}
+                      >
+                        {s.source.replace(/_/g, " ")} {s.done ? "✓" : "○"}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Inline similar leads preview */}
+                {lead.similarMatches && lead.similarMatches.length > 0 && !lead.duplicateOf && (
+                  <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                    <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-2">
+                      {lead.similarMatches.length} similar lead{lead.similarMatches.length !== 1 ? "s" : ""} found
+                    </p>
+                    <ul className="space-y-1.5 max-h-24 overflow-y-auto">
+                      {lead.similarMatches.slice(0, 5).map((m) => (
+                        <li key={m.id} className="text-xs flex items-start gap-2">
+                          <span className="font-medium text-foreground truncate flex-1 min-w-0">{m.name}</span>
+                          <span className="text-[10px] text-amber-600 dark:text-amber-400 flex-shrink-0">({m.score}%)</span>
+                        </li>
+                      ))}
+                      {lead.similarMatches.length > 5 && (
+                        <li className="text-[10px] text-muted-foreground">+{lead.similarMatches.length - 5} more</li>
+                      )}
+                    </ul>
+                  </div>
                 )}
               </div>
               </div>
               <div className="flex flex-col gap-2 sm:flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                {(lead.crmStatus === "PENDING" || !lead.checkedAt) && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRunCheck(lead)}
-                    disabled={lead.isChecking}
-                    className="gap-2"
-                  >
-                    {lead.isChecking ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Search className="w-4 h-4" />
-                    )}
-                    {lead.isChecking ? "Checking..." : "Run Check"}
-                  </Button>
-                )}
-                {lead.crmStatus === "NEW" && (
+                {((lead.crmStatus === "PENDING" || !lead.checkedAt) || lead.crmStatus === "NEW" || lead.crmStatus === "FOUND_SIMILAR") && lead.isNew !== false && (
                   <div className="flex flex-col gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => onSaveToCrm([lead.id])}
-                      disabled={savingIds.has(lead.id)}
-                      className="gap-2"
-                    >
-                      {savingIds.has(lead.id) ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <CheckCircle2 className="w-4 h-4" />
-                      )}
-                      Save to CRM
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onRunCheck(lead)}
-                      disabled={lead.isChecking}
-                      className="gap-2"
-                    >
-                      {lead.isChecking ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Search className="w-4 h-4" />
-                      )}
-                      {lead.isChecking ? "Checking..." : "Check Duplication"}
-                    </Button>
+                    {lead.similarMatches && lead.similarMatches.length > 0 && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); setDuplicateSimilarLead(lead); }}
+                        className="gap-2"
+                      >
+                        <AlertTriangle className="w-4 h-4" />
+                        View Similar Leads ({lead.similarMatches.length})
+                      </Button>
+                    )}
+                    {!((lead.checkedAt || lead.crmCheckedAt) && lead.crmStatus === "NEW" && !lead.duplicateOf) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onRunCheck(lead)}
+                        disabled={lead.isChecking}
+                        className="gap-2"
+                      >
+                        {lead.isChecking ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Search className="w-4 h-4" />
+                        )}
+                        {lead.isChecking ? "Checking..." : "Check Duplication"}
+                      </Button>
+                    )}
                   </div>
                 )}
                 {lead.crmStatus === "DUPLICATE" && (
@@ -1095,6 +1328,17 @@ function CrmCheckView({
                       <XCircle className="w-4 h-4" />
                       Duplicate
                     </div>
+                    {lead.duplicateOf && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); setDuplicateSimilarLead(lead); }}
+                        className="gap-2"
+                      >
+                        <Search className="w-4 h-4" />
+                        View Duplicate
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -1111,26 +1355,39 @@ function CrmCheckView({
                     </Button>
                   </div>
                 )}
-                {lead.crmStatus === "SAVED" && (
+                {lead.isNew === false && (
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center gap-2 text-success text-sm">
                       <CheckCircle2 className="w-4 h-4" />
-                      Saved
+                      Saved to CRM
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onRunCheck(lead)}
-                      disabled={lead.isChecking}
-                      className="gap-2"
-                    >
-                      {lead.isChecking ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
+                    {(lead.duplicateOf || (lead.similarMatches && lead.similarMatches.length > 0)) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={(e) => { e.stopPropagation(); setDuplicateSimilarLead(lead); }}
+                        className="gap-2"
+                      >
                         <Search className="w-4 h-4" />
-                      )}
-                      {lead.isChecking ? "Checking..." : "Check Duplication"}
-                    </Button>
+                        {lead.duplicateOf ? "View Duplicate" : `View Similar Leads (${lead.similarMatches!.length})`}
+                      </Button>
+                    )}
+                    {!((lead.checkedAt || lead.crmCheckedAt) && lead.crmStatus === "NEW" && !lead.duplicateOf) && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onRunCheck(lead)}
+                        disabled={lead.isChecking}
+                        className="gap-2"
+                      >
+                        {lead.isChecking ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Search className="w-4 h-4" />
+                        )}
+                        {lead.isChecking ? "Checking..." : "Check Duplication"}
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1138,6 +1395,90 @@ function CrmCheckView({
           </div>
         ))
         )}
+
+      {/* Duplicate / Similar leads popup */}
+      <Dialog open={!!duplicateSimilarLead} onOpenChange={(open) => !open && setDuplicateSimilarLead(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          {duplicateSimilarLead && (
+            <>
+              <DialogHeader>
+                <DialogTitle>
+                  {duplicateSimilarLead.duplicateOf ? "Duplicate Found" : "Similar Leads Found"}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="flex-1 overflow-y-auto space-y-4 pr-2">
+                {/* Lead being checked */}
+                <div className="p-4 rounded-lg bg-secondary/50 border border-border">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Lead checked</p>
+                  <h4 className="font-semibold text-foreground">{duplicateSimilarLead.name}</h4>
+                  <div className="mt-2 space-y-1 text-sm text-muted-foreground">
+                    {duplicateSimilarLead.address && <p>{duplicateSimilarLead.address}</p>}
+                    {duplicateSimilarLead.phone && <p>{duplicateSimilarLead.phone}</p>}
+                    {duplicateSimilarLead.website && (
+                      <a href={`https://${duplicateSimilarLead.website}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                        {duplicateSimilarLead.website}
+                      </a>
+                    )}
+                  </div>
+                  {duplicateSimilarLead.checkMessage && (
+                    <p className="mt-2 text-xs text-muted-foreground">{duplicateSimilarLead.checkMessage}</p>
+                  )}
+                </div>
+
+                {/* Duplicate of */}
+                {duplicateSimilarLead.duplicateOf && (
+                  <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <p className="text-xs font-semibold text-destructive uppercase tracking-wider mb-2">Duplicate of</p>
+                    <h4 className="font-semibold text-foreground">{duplicateSimilarLead.duplicateOf.name}</h4>
+                    {duplicateSimilarLead.duplicateOf.crmId && (
+                      <p className="mt-1 text-xs text-muted-foreground">CRM ID: {duplicateSimilarLead.duplicateOf.crmId}</p>
+                    )}
+                  </div>
+                )}
+
+                {/* Similar matches */}
+                {duplicateSimilarLead.similarMatches && duplicateSimilarLead.similarMatches.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+                      Similar leads ({duplicateSimilarLead.similarMatches.length})
+                    </p>
+                    <div className="space-y-3">
+                      {duplicateSimilarLead.similarMatches.map((m) => (
+                        <div
+                          key={m.id}
+                          className="p-4 rounded-lg bg-amber-500/10 border border-amber-500/20"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="font-medium text-foreground">{m.name}</h4>
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 font-medium mt-1 inline-block">
+                                Score: {m.score}%
+                              </span>
+                              {m.source === "duplicate_dummy" && (
+                                <span className="ml-1 text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                                  CRM record
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {m.reason && (
+                            <p className="mt-2 text-xs text-muted-foreground">{m.reason}</p>
+                          )}
+                          {m.matchedFields && m.matchedFields.length > 0 && (
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              Matched: {m.matchedFields.join(", ")}
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Sticky save bar when selected (like Create List) */}
       {selectedLeads.size > 0 && (
@@ -1165,7 +1506,7 @@ function CrmCheckView({
             </Button>
             {(() => {
               const selectedSaveable = leads.filter(
-                (l) => selectedLeads.has(l.id) && l.crmStatus === "NEW" && !savingIds.has(l.id)
+                (l) => selectedLeads.has(l.id) && (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && l.isNew !== false && !savingIds.has(l.id)
               );
               return selectedSaveable.length > 0 ? (
                 <Button
@@ -1178,14 +1519,25 @@ function CrmCheckView({
                 </Button>
               ) : null;
             })()}
-            <Button
-              size="sm"
-              onClick={onNavigateToEnrichment}
-              className="gap-2 bg-primary"
-            >
-              <ChevronRight className="w-3.5 h-3.5" />
-              Go to Enrichment
-            </Button>
+            {(() => {
+              const selectedEligible = leads.filter((l) => {
+                if (!selectedLeads.has(l.id)) return false;
+                const wasChecked = !!(l.checkedAt || l.crmCheckedAt);
+                const passedCheck = (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && !l.duplicateOf;
+                const saved = l.isNew === false;
+                return wasChecked && passedCheck && saved;
+              });
+              return selectedEligible.length > 0 ? (
+                <Button
+                  size="sm"
+                  onClick={() => onMoveToEnrichment(selectedEligible.map((l) => l.id))}
+                  className="gap-2 bg-primary"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                  Move {selectedEligible.length} to Enrichment
+                </Button>
+              ) : null;
+            })()}
           </div>
         </div>
       )}
@@ -1323,44 +1675,78 @@ function LeadsListView({
   );
 }
 
-function CrmCheckStatusBadge({ status }: { status?: string }) {
+function CrmCheckStatusBadge({ lead }: { lead: CrmCheckLead }) {
+  const wasChecked = !!(lead.checkedAt || lead.crmCheckedAt);
+  const hasSimilar = wasChecked && (lead.similarMatches?.length ?? 0) > 0 && !lead.duplicateOf;
+  const passedCheck = wasChecked && lead.crmStatus === "NEW" && !lead.duplicateOf;
+  const effectiveStatus = lead.duplicateOf
+    ? "DUPLICATE"
+    : hasSimilar
+      ? "FOUND_SIMILAR"
+      : passedCheck
+        ? "NOT_DUPLICATE"
+        : (lead.crmStatus ?? "PENDING");
   const config: Record<string, { label: string; className: string }> = {
     PENDING: { label: "Pending", className: "bg-muted text-muted-foreground border-border" },
     NEW: { label: "New", className: "bg-primary/15 text-primary border-primary/30" },
+    NOT_DUPLICATE: { label: "Not Duplicate", className: "bg-primary/15 text-primary border-primary/30" },
     DUPLICATE: { label: "Duplicate", className: "bg-destructive/15 text-destructive border-destructive/30" },
+    FOUND_SIMILAR: { label: "Found Similar", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30" },
     ALREADY_REACHED: { label: "Already Reached", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30" },
-    SAVED: { label: "Saved", className: "bg-success/15 text-success border-success/30" },
   };
-  const c = config[status ?? "PENDING"] ?? config.PENDING;
+  const c = config[effectiveStatus] ?? config.PENDING;
+  const saved = lead.isNew === false;
   return (
-    <span className={cn("text-xs px-2.5 py-1 rounded-full border font-medium", c.className)}>
-      {c.label}
-    </span>
+    <div className="flex items-center gap-1.5 flex-wrap">
+      <span className={cn("text-xs px-2.5 py-1 rounded-full border font-medium", c.className)}>
+        {c.label}
+      </span>
+      {saved && (
+        <span className="text-xs px-2.5 py-1 rounded-full border font-medium bg-success/15 text-success border-success/30">
+          Saved to CRM
+        </span>
+      )}
+    </div>
   );
 }
 
 /* ─── Enrichment View (verified + no duplicate leads only) ─── */
 function EnrichmentView({
   leads,
+  isLoading: isLoadingStage,
   selectedLeads,
   savingIds,
   onToggle,
   onClearSelection,
   onSaveToCrm,
+  onRemoveLeads,
+  isRemoving,
   onBack,
   onNavigateToCollectDetails,
   onViewLead,
 }: {
   leads: Lead[];
+  isLoading?: boolean;
   selectedLeads: Set<string>;
   savingIds: Set<string>;
   onToggle: (id: string) => void;
   onClearSelection: () => void;
   onSaveToCrm: (leadIds: string[]) => Promise<void>;
+  onRemoveLeads: (leadIds: string[]) => void;
+  isRemoving?: boolean;
   onBack: () => void;
   onNavigateToCollectDetails: () => void;
   onViewLead: (lead: Lead) => void;
 }) {
+  if (isLoadingStage) {
+    return (
+      <div className="p-8 flex flex-col items-center justify-center h-full text-center">
+        <Loader2 className="w-10 h-10 text-primary animate-spin mb-3" />
+        <p className="text-sm font-medium text-foreground">Loading enrichment leads...</p>
+      </div>
+    );
+  }
+
   if (leads.length === 0) {
     return (
       <div className="p-8 flex flex-col items-center justify-center h-full text-center">
@@ -1437,9 +1823,19 @@ function EnrichmentView({
             >
               Clear
             </button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onRemoveLeads(Array.from(selectedLeads))}
+              disabled={isRemoving}
+              className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Remove Selected
+            </Button>
             {(() => {
               const selectedNew = leads.filter(
-                (l) => selectedLeads.has(l.id) && l.crmStatus === "NEW" && !savingIds.has(l.id)
+                (l) => selectedLeads.has(l.id) && (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && l.isNew !== false && !savingIds.has(l.id)
               );
               return selectedNew.length > 0 ? (
                 <Button
@@ -1526,8 +1922,11 @@ function ResultsView({
   isLoadingSession,
   searchError,
   onSaveToCrm,
-  onSaveAndCheckDuplicate,
+  onMoveToCrmCheck,
+  isMovingToCrmCheck,
   onExport,
+  onRemoveLeads,
+  isRemoving,
   onClearSelection,
 }: {
   leads: Lead[];
@@ -1541,10 +1940,45 @@ function ResultsView({
   isLoadingSession: boolean;
   searchError: string | null;
   onSaveToCrm: () => void;
-  onSaveAndCheckDuplicate: () => void;
+  onMoveToCrmCheck: () => void;
+  isMovingToCrmCheck: boolean;
   onExport: () => void;
+  onRemoveLeads: (leadIds: string[]) => void;
+  isRemoving?: boolean;
   onClearSelection: () => void;
 }) {
+  // Group leads by name (same company, different locations) — accent colors + sibling list
+  const { companyColors, companySiblings } = useMemo(() => {
+    const byName = new Map<string, Lead[]>();
+    for (const l of leads) {
+      const list = byName.get(l.name) ?? [];
+      list.push(l);
+      byName.set(l.name, list);
+    }
+    const leadToColor = new Map<string, string>();
+    const leadToSiblings = new Map<string, Lead[]>();
+    const BORDERS = [
+      "border-l-4 border-l-blue-500/80",
+      "border-l-4 border-l-emerald-500/80",
+      "border-l-4 border-l-amber-500/80",
+      "border-l-4 border-l-violet-500/80",
+      "border-l-4 border-l-rose-500/80",
+      "border-l-4 border-l-cyan-500/80",
+    ];
+    let idx = 0;
+    for (const [, group] of byName) {
+      if (group.length > 1) {
+        const c = BORDERS[idx % BORDERS.length];
+        for (const l of group) {
+          leadToColor.set(l.id, c);
+          leadToSiblings.set(l.id, group.filter((x) => x.id !== l.id));
+        }
+        idx++;
+      }
+    }
+    return { companyColors: leadToColor, companySiblings: leadToSiblings };
+  }, [leads]);
+
   if (isSearching) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-5 min-h-[300px]">
@@ -1554,7 +1988,9 @@ function ResultsView({
           <p className="text-xs text-muted-foreground mt-1">
             {searchMeta?.mode === "natural"
               ? searchMeta.query
-              : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
+              : searchMeta?.mode === "current_location"
+                ? "Searching near your current location..."
+                : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
           </p>
         </div>
       </div>
@@ -1574,7 +2010,14 @@ function ResultsView({
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto animate-slide-up">
+    <div className="p-6 max-w-5xl mx-auto animate-slide-up relative">
+      {isMovingToCrmCheck && (
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm rounded-xl min-h-[300px]">
+          <Loader2 className="w-12 h-12 text-primary animate-spin mb-3" />
+          <p className="text-sm font-semibold text-foreground">Moving to CRM Check...</p>
+          <p className="text-xs text-muted-foreground mt-1">Please wait</p>
+        </div>
+      )}
       {searchError && (
         <div className="mb-4 rounded-lg bg-destructive/10 border border-destructive/20 px-4 py-3 text-sm text-destructive">
           {searchError}
@@ -1585,6 +2028,10 @@ function ResultsView({
         {searchMeta?.mode === "natural" ? (
           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
             <Search className="w-3 h-3 text-primary" />{searchMeta.query}
+          </span>
+        ) : searchMeta?.mode === "current_location" ? (
+          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+            <MapPin className="w-3 h-3 text-primary" />Near Me &middot; {searchMeta.radiusKm} km radius
           </span>
         ) : (
           <>
@@ -1630,6 +2077,8 @@ function ResultsView({
             selected={selectedLeads.has(lead.id)}
             onToggle={onToggle}
             onView={onViewLead}
+            companyColor={companyColors.get(lead.id)}
+            siblingLeads={companySiblings.get(lead.id)}
           />
         ))}
       </div>
@@ -1650,6 +2099,15 @@ function ResultsView({
             </button>
             <button
               type="button"
+              onClick={() => onRemoveLeads(Array.from(selectedLeads))}
+              disabled={isRemoving}
+              className="text-xs px-4 py-2 rounded-lg border border-destructive/50 text-destructive hover:bg-destructive/10 transition-all flex items-center gap-1.5 disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Remove Selected
+            </button>
+            <button
+              type="button"
               onClick={() => onExport()}
               className="text-xs px-4 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-all flex items-center gap-1.5"
             >
@@ -1658,11 +2116,16 @@ function ResultsView({
             </button>
             <button
               type="button"
-              onClick={() => onSaveAndCheckDuplicate()}
-              className="text-xs px-4 py-2 rounded-lg bg-primary/80 text-primary-foreground font-semibold hover:bg-primary transition-all flex items-center gap-1.5 border border-primary/50"
+              onClick={() => onMoveToCrmCheck()}
+              disabled={isMovingToCrmCheck}
+              className="text-xs px-4 py-2 rounded-lg bg-primary/80 text-primary-foreground font-semibold hover:bg-primary transition-all flex items-center gap-1.5 border border-primary/50 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              <Shield className="w-3.5 h-3.5" />
-              Save & Check Duplicate
+              {isMovingToCrmCheck ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Shield className="w-3.5 h-3.5" />
+              )}
+              {isMovingToCrmCheck ? "Moving to CRM Check..." : "Move to CRM Check"}
             </button>
             <button
               type="button"
@@ -1681,16 +2144,25 @@ function ResultsView({
 
 /* ─── Lead card with View button ─── */
 function ClickableLeadCard({
-  lead, selected, onToggle, onView,
+  lead, selected, onToggle, onView, companyColor, siblingLeads,
 }: {
   lead: Lead;
   selected: boolean;
   onToggle: (id: string) => void;
   onView: (lead: Lead) => void;
+  companyColor?: string;
+  siblingLeads?: Lead[];
 }) {
   return (
     <div className="relative group min-h-[220px] h-full flex flex-col">
-      <LeadCard lead={lead} selected={selected} onToggle={onToggle} />
+      <LeadCard
+        lead={lead}
+        selected={selected}
+        onToggle={onToggle}
+        companyColor={companyColor}
+        siblingLeads={siblingLeads}
+        onViewSibling={onView}
+      />
       {/* View button - inside card bounds, bottom right */}
       <button
         onClick={(e) => { e.stopPropagation(); onView(lead); }}

@@ -3,12 +3,11 @@ import { cn } from "@/lib/utils";
 
 const STEPS = [
   { id: 1, title: "Home" },
-  { id: 2, title: "Search Maps" },
-  { id: 3, title: "Create List" },
-  { id: 4, title: "CRM Check" },
-  { id: 5, title: "Enrichment" },
-  { id: 6, title: "Collect Details" },
-  { id: 7, title: "Finalize Outreach" },
+  { id: 2, title: "Create List" },
+  { id: 3, title: "CRM Check" },
+  { id: 4, title: "Enrichment" },
+  { id: 5, title: "Collect Details" },
+  { id: 6, title: "Finalize Outreach" },
 ];
 
 interface WorkflowStepperProps {

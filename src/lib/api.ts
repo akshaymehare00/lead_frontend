@@ -97,7 +97,15 @@ export interface SearchParamsManual {
   maxLead?: number;
 }
 
-export type SearchParams = SearchParamsNatural | SearchParamsManual;
+export interface SearchParamsCurrentLocation {
+  mode: "current_location";
+  latitude: number;
+  longitude: number;
+  radiusKm?: number;
+  maxLead?: number;
+}
+
+export type SearchParams = SearchParamsNatural | SearchParamsManual | SearchParamsCurrentLocation;
 
 export interface PlaceSuggestion {
   id: string;
@@ -111,6 +119,17 @@ export interface SearchStartResponse {
   searchSessionId: string;
   status: string;
   message: string;
+}
+
+/** CRM check match from session/API (same shape as CrmCheckSimilarMatch) */
+export interface CrmCheckMatch {
+  id: string;
+  source: "lead" | "duplicate_dummy";
+  name: string;
+  score?: number;
+  matchedFields: string[];
+  reason: string;
+  crmId?: string | null;
 }
 
 export interface LeadResponse {
@@ -136,6 +155,12 @@ export interface LeadResponse {
   searchSessionId: string;
   createdAt: string;
   updatedAt: string;
+  /** When duplicate check was last performed. null = not yet checked */
+  crmCheckedAt?: string | null;
+  /** Duplicate/similar matches from last check. null when no matches */
+  crmCheckMatches?: CrmCheckMatch[] | null;
+  /** True when crmStatus is NEW or FOUND_SIMILAR (proceed to enrichment) */
+  isNew?: boolean;
 }
 
 export interface SearchStatusResponse {
@@ -164,6 +189,129 @@ export interface SessionDetailResponse extends SessionListItem {
   userId: string | null;
   user?: { id: string; email: string; name: string };
   leads: LeadResponse[];
+}
+
+/** POST /api/v1/leads/:leadId/crm-check — Request body (all optional) */
+export interface CrmCheckRequestBody {
+  phone?: string;
+  website?: string;
+  email?: string;
+  name?: string;
+  address?: string;
+  category?: string;
+  contactPerson?: string;
+}
+
+/** Similar match item in CRM check response */
+export interface CrmCheckSimilarMatch {
+  id: string;
+  source: "lead" | "duplicate_dummy";
+  name: string;
+  score: number;
+  matchedFields: string[];
+  reason: string;
+}
+
+/** POST /api/v1/leads/:leadId/crm-check — Response */
+export interface CrmCheckResponse {
+  leadId: string;
+  crmStatus: "NEW" | "DUPLICATE";
+  message: string;
+  duplicateOf: {
+    id: string;
+    name: string;
+    crmId: string | null;
+  } | null;
+  similarMatches?: CrmCheckSimilarMatch[];
+  aiUsed?: boolean;
+}
+
+/** GET /api/v1/leads/:leadId/duplicate-check — Match item */
+export interface DuplicateCheckMatch {
+  id: string;
+  source: "lead" | "duplicate_dummy";
+  name: string;
+  category: string | null;
+  address: string;
+  phone: string | null;
+  website: string | null;
+  email: string | null;
+  contactPerson: string | null;
+  crmId?: string | null;
+  score: number;
+  matchedFields: string[];
+  reason: string;
+}
+
+/** GET /api/v1/leads/:leadId/duplicate-check — Response (preview only, no status update) */
+export interface DuplicateCheckResponse {
+  direct: DuplicateCheckMatch | null;
+  similar: DuplicateCheckMatch[];
+  aiUsed: boolean;
+}
+
+/** DELETE /api/v1/leads/:leadId — Success response */
+export interface RemoveLeadResponse {
+  leadId: string;
+  searchSessionId: string;
+}
+
+/** POST /api/v1/leads/remove — Request */
+export interface RemoveLeadsRequest {
+  leadIds: string[];
+}
+
+/** POST /api/v1/leads/move-to-enrichment — Response */
+export interface MoveToEnrichmentResponse {
+  moved: number;
+  skipped: number;
+  failed: number;
+  results: Array<
+    | { leadId: string; status: "MOVED"; previousStep: number }
+    | { leadId: string; status: "SKIPPED"; reason: string }
+    | { leadId: string; status: "FAILED"; error: string }
+  >;
+}
+
+/** POST /api/v1/leads/remove — Response */
+export interface RemoveLeadsResponse {
+  removed: number;
+  failed: number;
+  results: Array<
+    | { leadId: string; searchSessionId: string; status: "REMOVED" }
+    | { leadId: string; status: "FAILED"; error: string }
+  >;
+}
+
+/** POST /api/v1/leads/bulk-crm-check — Request */
+export interface BulkCrmCheckRequest {
+  leadIds: string[];
+}
+
+/** POST /api/v1/leads/bulk-crm-check — Success item */
+export interface BulkCrmCheckOkItem {
+  status: "OK";
+  leadId: string;
+  crmStatus: "NEW" | "FOUND_SIMILAR" | "DUPLICATE";
+  message: string;
+  duplicateOf: { id: string; name: string; crmId: string | null } | null;
+  similarMatches?: CrmCheckSimilarMatch[];
+  aiUsed?: boolean;
+}
+
+/** POST /api/v1/leads/bulk-crm-check — Failure item */
+export interface BulkCrmCheckFailedItem {
+  status: "FAILED";
+  leadId: string;
+  error: string;
+}
+
+/** POST /api/v1/leads/bulk-crm-check — Response */
+export interface BulkCrmCheckResponse {
+  results: Array<BulkCrmCheckOkItem | BulkCrmCheckFailedItem>;
+  total: number;
+  ok: number;
+  failed: number;
 }
 
 export interface LeadHistoryItem {
@@ -247,8 +395,10 @@ export const api = {
       request<{ sessions: SessionListItem[]; total: number }>(
         `/api/v1/sessions?limit=${limit}&offset=${offset}`
       ),
-    get: (sessionId: string) =>
-      request<SessionDetailResponse>(`/api/v1/sessions/${sessionId}`),
+    get: (sessionId: string, stage?: "crm_check" | "enrichment" | "saved" | "duplicate") =>
+      request<SessionDetailResponse>(
+        `/api/v1/sessions/${sessionId}${stage ? `?stage=${stage}` : ""}`
+      ),
     rename: (sessionId: string, title: string) =>
       request<SessionListItem>(`/api/v1/sessions/${sessionId}`, {
         method: "PATCH",
@@ -271,13 +421,47 @@ export const api = {
       );
     },
     get: (leadId: string) => request<LeadResponse>(`/api/v1/leads/${leadId}`),
+    /** Remove a single lead (DELETE) */
+    remove: (leadId: string) =>
+      request<RemoveLeadResponse>(`/api/v1/leads/${leadId}`, { method: "DELETE" }),
+    /** Remove multiple leads (bulk POST) */
+    removeBulk: (leadIds: string[]) =>
+      request<RemoveLeadsResponse>("/api/v1/leads/remove", {
+        method: "POST",
+        body: JSON.stringify({ leadIds }),
+      }),
+    moveToCrmCheck: (leadIds: string[]) =>
+      request<MoveToEnrichmentResponse>("/api/v1/leads/move-to-crm-check", {
+        method: "POST",
+        body: JSON.stringify({ leadIds }),
+      }),
+    moveToEnrichment: (leadIds: string[]) =>
+      request<MoveToEnrichmentResponse>("/api/v1/leads/move-to-enrichment", {
+        method: "POST",
+        body: JSON.stringify({ leadIds }),
+      }),
     history: (leadId: string) =>
       request<LeadHistoryItem[]>(`/api/v1/leads/${leadId}/history`),
-    crmCheck: (leadId: string, body?: { phone?: string; website?: string }) =>
-      request<{ leadId: string; crmStatus: string; message: string; duplicateOf: unknown }>(
-        `/api/v1/leads/${leadId}/crm-check`,
-        { method: "POST", body: JSON.stringify(body ?? {}) }
-      ),
+    /** CRM Check — duplicate detection with status update (POST) */
+    crmCheck: (leadId: string, body?: CrmCheckRequestBody) =>
+      request<CrmCheckResponse>(`/api/v1/leads/${leadId}/crm-check`, {
+        method: "POST",
+        body: JSON.stringify(body ?? {}),
+      }),
+    /** Duplicate Check — preview only, no status update (GET) */
+    duplicateCheck: (leadId: string) =>
+      request<DuplicateCheckResponse>(`/api/v1/leads/${leadId}/duplicate-check`),
+    /** Bulk CRM Check — run duplicate check on multiple leads in one request */
+    bulkCrmCheck: (leadIds: string[]) =>
+      request<BulkCrmCheckResponse>("/api/v1/leads/bulk-crm-check", {
+        method: "POST",
+        body: JSON.stringify({ leadIds }),
+      }),
+    /** Confirm proceed — persist "proceed for enrichment" when user confirmed after GET preview */
+    confirmProceed: (leadId: string) =>
+      request<{ leadId: string; crmStatus: string }>(`/api/v1/leads/${leadId}/confirm-proceed`, {
+        method: "POST",
+      }),
     updateStatus: (leadId: string, crmStatus: string) =>
       request<{ leadId: string; crmStatus: string }>(`/api/v1/leads/${leadId}/status`, {
         method: "PATCH",
@@ -335,6 +519,16 @@ export const api = {
 
 /** Convert API LeadResponse to frontend Lead shape */
 export function toLead(lead: LeadResponse) {
+  const crmCheckedAt = lead.crmCheckedAt ?? null;
+  const checkedAt = crmCheckedAt ? (Date.parse(crmCheckedAt) || undefined) : undefined;
+  const similarMatches = (lead.crmCheckMatches ?? []).map((m) => ({
+    id: m.id,
+    source: m.source as "lead" | "duplicate_dummy",
+    name: m.name,
+    score: m.score ?? 0,
+    matchedFields: m.matchedFields ?? [],
+    reason: m.reason ?? "",
+  }));
   return {
     id: lead.id,
     rank: lead.rank,
@@ -345,12 +539,18 @@ export function toLead(lead: LeadResponse) {
     phone: lead.phone ?? undefined,
     website: lead.website ?? undefined,
     hours: lead.hours ?? undefined,
-    isNew: lead.crmStatus === "NEW",
-    crmStatus: lead.crmStatus,
+    isNew: (!!lead.crmCheckedAt || lead.crmStatus === "SAVED") ? false : (lead.isNew ?? undefined),
+    crmStatus: lead.crmStatus === "SAVED" ? "NEW" : lead.crmStatus,
     duplicateOf: lead.duplicateOf ?? undefined,
     email: lead.email ?? undefined,
     linkedin: lead.linkedin ?? undefined,
     instagram: lead.instagram ?? undefined,
     enrichmentStatus: lead.enrichmentStatus,
+    enrichmentSources: lead.enrichmentSources,
+    contactPerson: lead.contactPerson ?? undefined,
+    crmCheckedAt: crmCheckedAt ?? undefined,
+    checkedAt,
+    similarMatches: similarMatches.length > 0 ? similarMatches : undefined,
+    currentStep: lead.currentStep,
   };
 }

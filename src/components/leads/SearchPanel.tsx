@@ -21,17 +21,50 @@ const CATEGORIES = [
 const LEAD_COUNTS = [10, 20, 30, 50, 100];
 const RADIUS_OPTIONS = [5, 10, 25, 50, 100, 200];
 
-function getCurrentPosition(): Promise<GeolocationPosition> {
+/**
+ * Uses watchPosition to progressively refine accuracy.
+ * Resolves with the best position within the time limit or
+ * as soon as accuracy is under the target threshold.
+ */
+function getBestPosition(targetAccuracy = 100, maxWaitMs = 15_000): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error("Geolocation is not supported by your browser"));
       return;
     }
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 15_000,
-      maximumAge: 60_000,
-    });
+
+    let best: GeolocationPosition | null = null;
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        if (!best || pos.coords.accuracy < best.coords.accuracy) {
+          best = pos;
+        }
+        if (pos.coords.accuracy <= targetAccuracy) {
+          navigator.geolocation.clearWatch(watchId);
+          clearTimeout(timer);
+          resolve(best);
+        }
+      },
+      (err) => {
+        navigator.geolocation.clearWatch(watchId);
+        clearTimeout(timer);
+        if (best) {
+          resolve(best);
+        } else {
+          reject(err);
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: maxWaitMs }
+    );
+
+    const timer = setTimeout(() => {
+      navigator.geolocation.clearWatch(watchId);
+      if (best) {
+        resolve(best);
+      } else {
+        reject(new Error("Location request timed out. Please try again."));
+      }
+    }, maxWaitMs);
   });
 }
 
@@ -50,7 +83,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   const [countOpen, setCountOpen] = useState(false);
 
   // Near Me state
-  const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
   const [locatingStatus, setLocatingStatus] = useState<"idle" | "loading" | "granted" | "error">("idle");
   const [locationError, setLocationError] = useState<string | null>(null);
   const [radiusKm, setRadiusKm] = useState(25);
@@ -65,17 +98,18 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   const requestLocation = useCallback(async () => {
     setLocatingStatus("loading");
     setLocationError(null);
+    setCoords(null);
     try {
-      const pos = await getCurrentPosition();
-      setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      const pos = await getBestPosition(100, 15_000);
+      setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy });
       setLocatingStatus("granted");
     } catch (err) {
       const geo = err as GeolocationPositionError;
-      if (geo.code === 1) {
+      if (geo?.code === 1) {
         setLocationError("Location access denied. Please allow location in your browser settings.");
-      } else if (geo.code === 2) {
+      } else if (geo?.code === 2) {
         setLocationError("Location unavailable. Try searching by city instead.");
-      } else if (geo.code === 3) {
+      } else if (geo?.code === 3) {
         setLocationError("Location request timed out. Please try again.");
       } else {
         setLocationError(err instanceof Error ? err.message : "Failed to get location");
@@ -235,17 +269,33 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
           ) : locatingStatus === "loading" ? (
             <div className="flex flex-col items-center gap-3 py-6">
               <Loader2 className="w-6 h-6 text-primary animate-spin" />
-              <p className="text-xs text-muted-foreground">Getting your location...</p>
+              <p className="text-xs text-muted-foreground">Getting your exact location...</p>
+              <p className="text-[10px] text-muted-foreground/60">This may take a few seconds for best accuracy</p>
             </div>
           ) : (
             <>
-              <div className="flex items-center gap-2 p-3 rounded-lg bg-success/10 border border-success/20">
-                <MapPin className="w-4 h-4 text-success flex-shrink-0" />
+              <div className={cn(
+                "flex items-center gap-2 p-3 rounded-lg border",
+                coords!.accuracy <= 1000
+                  ? "bg-success/10 border-success/20"
+                  : "bg-amber-500/10 border-amber-500/20"
+              )}>
+                <MapPin className={cn("w-4 h-4 flex-shrink-0", coords!.accuracy <= 1000 ? "text-success" : "text-amber-500")} />
                 <div className="min-w-0">
-                  <p className="text-xs font-medium text-foreground">Location acquired</p>
-                  <p className="text-[10px] text-muted-foreground truncate">
-                    {coords!.lat.toFixed(4)}, {coords!.lng.toFixed(4)}
+                  <p className="text-xs font-medium text-foreground">
+                    {coords!.accuracy <= 1000 ? "Location acquired" : "Approximate location"}
                   </p>
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    {coords!.lat.toFixed(6)}, {coords!.lng.toFixed(6)}
+                    <span className="ml-1.5 text-muted-foreground/60">
+                      ±{coords!.accuracy < 1000 ? `${Math.round(coords!.accuracy)}m` : `${(coords!.accuracy / 1000).toFixed(1)}km`}
+                    </span>
+                  </p>
+                  {coords!.accuracy > 1000 && (
+                    <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">
+                      Tap Refresh for better accuracy or use on mobile for GPS
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={requestLocation}

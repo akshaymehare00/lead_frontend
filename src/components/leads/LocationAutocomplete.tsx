@@ -26,12 +26,10 @@ export function LocationAutocomplete({
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Sync input when value changes externally
   useEffect(() => {
     setInputValue(value);
   }, [value]);
 
-  // Debounced fetch
   useEffect(() => {
     const q = inputValue.trim();
     if (!q || q.length < 2) {
@@ -45,7 +43,6 @@ export function LocationAutocomplete({
       try {
         const { suggestions: list } = await api.places.autocomplete(q, 5);
         setSuggestions(list);
-        // Don't reopen dropdown if input already matches a suggestion (user just selected it)
         const isAlreadySelected = list.some((s) => s.canonicalName === q);
         setOpen(list.length > 0 && !isAlreadySelected);
       } catch {
@@ -59,7 +56,6 @@ export function LocationAutocomplete({
     return () => clearTimeout(timer);
   }, [inputValue]);
 
-  // Close on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
@@ -83,7 +79,6 @@ export function LocationAutocomplete({
   };
 
   const handleBlur = () => {
-    // Delay to allow click on suggestion
     setTimeout(() => setOpen(false), 150);
   };
 

@@ -1200,7 +1200,7 @@ function CrmCheckView({
                     </div>
                   </div>
                   <CrmCheckStatusBadge lead={lead} />
-                  {(lead.crmStatus === "NEW" || lead.crmStatus === "FOUND_SIMILAR") && (lead.checkedAt || lead.crmCheckedAt) && !lead.duplicateOf && lead.isNew === false && (
+                  {(lead.crmStatus === "NEW" || lead.crmStatus === "FOUND_SIMILAR") && (lead.checkedAt || lead.crmCheckedAt) && !lead.duplicateOf && (
                     <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-success/15 border-success/30 text-success">
                       {lead.similarMatches?.length ? "Review similar, then enrich" : "Proceed to Enrichment"}
                     </span>
@@ -1508,8 +1508,7 @@ function CrmCheckView({
                 if (!selectedLeads.has(l.id)) return false;
                 const wasChecked = !!(l.checkedAt || l.crmCheckedAt);
                 const passedCheck = (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && !l.duplicateOf;
-                const saved = l.isNew === false;
-                return wasChecked && passedCheck && saved;
+                return wasChecked && passedCheck;
               });
               return selectedEligible.length > 0 ? (
                 <Button
@@ -1673,7 +1672,7 @@ function CrmCheckStatusBadge({ lead }: { lead: CrmCheckLead }) {
   const config: Record<string, { label: string; className: string }> = {
     PENDING: { label: "Pending", className: "bg-muted text-muted-foreground border-border" },
     NEW: { label: "New", className: "bg-primary/15 text-primary border-primary/30" },
-    NOT_DUPLICATE: { label: "Not Duplicate", className: "bg-primary/15 text-primary border-primary/30" },
+    NOT_DUPLICATE: { label: "Not Duplicate", className: "bg-success/15 text-success border-success/30" },
     DUPLICATE: { label: "Duplicate", className: "bg-destructive/15 text-destructive border-destructive/30" },
     FOUND_SIMILAR: { label: "Found Similar", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30" },
     ALREADY_REACHED: { label: "Already Reached", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30" },
@@ -2066,7 +2065,12 @@ function ResultsView({
         )}
         <div className="ml-auto flex items-center gap-3">
           {selectedLeads.size > 0 && (
-            <span className="text-xs text-muted-foreground">{selectedLeads.size} selected</span>
+            <>
+              <span className="text-xs text-muted-foreground">{selectedLeads.size} selected</span>
+              <button onClick={onClearSelection} className="text-xs text-destructive hover:underline font-semibold">
+                Deselect All
+              </button>
+            </>
           )}
           <button onClick={onSelectAllNew} className="text-xs text-primary hover:underline font-semibold">
             Select All New

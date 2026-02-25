@@ -29,6 +29,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
     email?: string | null;
     linkedin?: string | null;
     instagram?: string | null;
+    website?: string | null;
     contactPerson?: string | null;
     designation?: string | null;
     crmStatus?: string;
@@ -46,6 +47,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
           email: l.email,
           linkedin: l.linkedin,
           instagram: l.instagram,
+          website: l.website,
           contactPerson: l.contactPerson,
           designation: l.designation,
           crmStatus: l.crmStatus,
@@ -69,9 +71,15 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
   const apiEnrichment = new Map(
     (fullLead?.enrichmentSources ?? []).map((s) => [s.source, s.done])
   );
+  const hasData: Record<string, boolean> = {
+    GOOGLE_MAPS: true,
+    WEBSITE: !!(fullLead?.website || lead.website),
+    LINKEDIN: !!(fullLead?.linkedin || lead.linkedin),
+    INSTAGRAM: !!(fullLead?.instagram || lead.instagram),
+  };
   const enrichmentSources = Object.entries(ENRICHMENT_SOURCE_MAP).map(([key, val]) => ({
     ...val,
-    done: apiEnrichment.get(key) ?? (key === "GOOGLE_MAPS"),
+    done: apiEnrichment.get(key) || hasData[key] || false,
   }));
 
   return (
@@ -134,8 +142,20 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
             <div className="space-y-3">
               <InfoRow icon={MapPin} label="Address" value={lead.address} />
               {lead.phone && <InfoRow icon={Phone} label="Phone" value={lead.phone} />}
-              {lead.website && (
-                <InfoRow icon={Globe} label="Website" value={lead.website} isLink />
+              {(fullLead?.email || lead.email) && (
+                <InfoRow icon={Mail} label="Email" value={(fullLead?.email ?? lead.email)!} isMailto />
+              )}
+              {(lead.website || fullLead?.website) && (
+                <InfoRow icon={Globe} label="Website" value={(lead.website || fullLead?.website)!} isLink />
+              )}
+              {(fullLead?.linkedin || lead.linkedin) && (
+                <InfoRow icon={Linkedin} label="LinkedIn" value={(fullLead?.linkedin ?? lead.linkedin)!} isLink />
+              )}
+              {(fullLead?.instagram || lead.instagram) && (
+                <InfoRow icon={Instagram} label="Instagram" value={(fullLead?.instagram ?? lead.instagram)!} isLink />
+              )}
+              {(fullLead?.contactPerson || lead.contactPerson) && (
+                <InfoRow icon={User} label="Contact Person" value={(fullLead?.contactPerson ?? lead.contactPerson)!} />
               )}
               {lead.hours && <InfoRow icon={Clock} label="Hours" value={lead.hours} />}
             </div>
@@ -179,11 +199,14 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
             </p>
             <div className="space-y-2.5">
               <DataField icon={Building2} label="Company Name" value={lead.name} filled />
-              <DataField icon={User} label="Contact Person" value={fullLead?.contactPerson ?? "—"} filled={!!fullLead?.contactPerson} />
+              <DataField icon={User} label="Contact Person" value={fullLead?.contactPerson ?? lead.contactPerson ?? "—"} filled={!!(fullLead?.contactPerson || lead.contactPerson)} />
               <DataField icon={Tag} label="Designation / Title" value={fullLead?.designation ?? "—"} filled={!!fullLead?.designation} />
               <DataField icon={Building2} label="Customer Type" value={lead.category} filled />
               <DataField icon={Phone} label="Phone Number" value={lead.phone || "—"} filled={!!lead.phone} />
-              <DataField icon={Mail} label="Email Address" value={fullLead?.email ?? "—"} filled={!!fullLead?.email} />
+              <DataField icon={Mail} label="Email Address" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} />
+              <DataField icon={Globe} label="Website" value={fullLead?.website ?? lead.website ?? "—"} filled={!!(fullLead?.website || lead.website)} />
+              <DataField icon={Linkedin} label="LinkedIn" value={fullLead?.linkedin ?? lead.linkedin ?? "—"} filled={!!(fullLead?.linkedin || lead.linkedin)} />
+              <DataField icon={Instagram} label="Instagram" value={fullLead?.instagram ?? lead.instagram ?? "—"} filled={!!(fullLead?.instagram || lead.instagram)} />
               <DataField icon={MapPin} label="Full Address" value={lead.address} filled />
             </div>
           </div>
@@ -218,41 +241,6 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
             </div>
           )}
 
-          {/* CRM Status */}
-          <div className="p-6">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
-              CRM Status (Step 4)
-            </p>
-            <div className="flex items-center gap-3 p-3.5 rounded-xl bg-primary/8 border border-primary/15">
-              <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                <FileText className="w-4 h-4 text-primary" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-foreground">
-                  {(fullLead?.isNew ?? lead.isNew) === false
-                    ? "Saved to CRM"
-                    : fullLead?.crmStatus === "DUPLICATE"
-                    ? "Duplicate — exists in CRM"
-                    : fullLead?.crmStatus === "ALREADY_REACHED"
-                    ? "Already contacted"
-                    : fullLead?.crmStatus === "SKIPPED"
-                    ? "Skipped"
-                    : lead.isNew
-                    ? "Not in CRM — New Lead"
-                    : "Existing Lead in CRM"}
-                </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {fullLead?.crmStatus === "NEW" || lead.isNew
-                    ? "Proceed to enrichment step"
-                    : (fullLead?.isNew ?? lead.isNew) === false
-                    ? "Successfully added to CRM"
-                    : fullLead?.crmStatus === "DUPLICATE"
-                    ? "Lead already exists — link to original"
-                    : "View history for details"}
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
 
         {/* Footer actions */}
@@ -291,32 +279,43 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
 };
 
 const InfoRow = ({
-  icon: Icon, label, value, isLink
+  icon: Icon, label, value, isLink, isMailto
 }: {
-  icon: React.ElementType; label: string; value: string; isLink?: boolean;
-}) => (
-  <div className="flex items-start gap-3">
-    <div className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0 mt-0.5">
-      <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+  icon: React.ElementType; label: string; value: string; isLink?: boolean; isMailto?: boolean;
+}) => {
+  const href = isMailto
+    ? `mailto:${value}`
+    : isLink
+      ? (value.startsWith("http://") || value.startsWith("https://") ? value : `https://${value}`)
+      : undefined;
+  const displayValue = isLink
+    ? value.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")
+    : value;
+
+  return (
+    <div className="flex items-start gap-3">
+      <div className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0 mt-0.5">
+        <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] text-muted-foreground/60 uppercase font-medium tracking-wider">{label}</p>
+        {href ? (
+          <a
+            href={href}
+            target={isMailto ? undefined : "_blank"}
+            rel={isMailto ? undefined : "noopener noreferrer"}
+            className="text-sm text-primary hover:underline flex items-center gap-1 mt-0.5 break-all"
+          >
+            {displayValue}
+            <ExternalLink className="w-3 h-3 flex-shrink-0" />
+          </a>
+        ) : (
+          <p className="text-sm text-foreground mt-0.5 leading-snug">{value}</p>
+        )}
+      </div>
     </div>
-    <div className="min-w-0">
-      <p className="text-[10px] text-muted-foreground/60 uppercase font-medium tracking-wider">{label}</p>
-      {isLink ? (
-        <a
-          href={`https://${value}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-primary hover:underline flex items-center gap-1 mt-0.5"
-        >
-          {value}
-          <ExternalLink className="w-3 h-3" />
-        </a>
-      ) : (
-        <p className="text-sm text-foreground mt-0.5 leading-snug">{value}</p>
-      )}
-    </div>
-  </div>
-);
+  );
+};
 
 const DataField = ({
   icon: Icon, label, value, filled

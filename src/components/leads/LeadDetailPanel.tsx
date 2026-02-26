@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import {
   X, Star, Phone, Globe, MapPin, Clock, ExternalLink,
-  CheckCircle2, Circle, Tag, User, Building2, Mail,
-  Linkedin, Instagram, FileText, ArrowRight, History, Trash2
+  CheckCircle2, User, Building2, Mail,
+  Linkedin, Instagram, ArrowRight, Trash2
 } from "lucide-react";
 import { Lead } from "./LeadCard";
 import { cn } from "@/lib/utils";
-import { api, type LeadHistoryItem } from "@/lib/api";
+import { api } from "@/lib/api";
 
 const ENRICHMENT_SOURCE_MAP: Record<string, { icon: typeof Globe; label: string }> = {
   WEBSITE: { icon: Globe, label: "Company Website" },
@@ -36,8 +36,6 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
     isNew?: boolean;
     enrichmentSources?: { source: string; done: boolean }[];
   } | null>(null);
-  const [leadHistory, setLeadHistory] = useState<LeadHistoryItem[]>([]);
-
   useEffect(() => {
     if (!lead?.id) return;
     api.leads
@@ -56,14 +54,6 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
         })
       )
       .catch(() => setFullLead(null));
-  }, [lead?.id]);
-
-  useEffect(() => {
-    if (!lead?.id) return;
-    api.leads
-      .history(lead.id)
-      .then(setLeadHistory)
-      .catch(() => setLeadHistory([]));
   }, [lead?.id]);
 
   if (!lead) return null;
@@ -161,37 +151,6 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
             </div>
           </div>
 
-          {/* Enrichment Checklist */}
-          <div className="p-6 border-b border-border">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
-              Enrichment Checklist (Step 6)
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              {enrichmentSources.map((src) => {
-                const Icon = src.icon;
-                return (
-                  <div
-                    key={src.label}
-                    className={cn(
-                      "flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-xs font-medium transition-all",
-                      src.done
-                        ? "bg-success/5 border-success/20 text-success"
-                        : "bg-secondary/30 border-border text-muted-foreground"
-                    )}
-                  >
-                    {src.done ? (
-                      <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                    ) : (
-                      <Circle className="w-3.5 h-3.5 flex-shrink-0" />
-                    )}
-                    <Icon className="w-3.5 h-3.5 flex-shrink-0" />
-                    {src.label}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
           {/* Lead Data Fields */}
           <div className="p-6 border-b border-border">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
@@ -199,8 +158,6 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
             </p>
             <div className="space-y-2.5">
               <DataField icon={Building2} label="Company Name" value={lead.name} filled />
-              <DataField icon={User} label="Contact Person" value={fullLead?.contactPerson ?? lead.contactPerson ?? "—"} filled={!!(fullLead?.contactPerson || lead.contactPerson)} />
-              <DataField icon={Tag} label="Designation / Title" value={fullLead?.designation ?? "—"} filled={!!fullLead?.designation} />
               <DataField icon={Building2} label="Customer Type" value={lead.category} filled />
               <DataField icon={Phone} label="Phone Number" value={lead.phone || "—"} filled={!!lead.phone} />
               <DataField icon={Mail} label="Email Address" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} />
@@ -210,36 +167,6 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
               <DataField icon={MapPin} label="Full Address" value={lead.address} filled />
             </div>
           </div>
-
-          {/* Audit Trail / History */}
-          {leadHistory.length > 0 && (
-            <div className="p-6 border-b border-border">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3 flex items-center gap-2">
-                <History className="w-3.5 h-3.5" />
-                Audit Trail
-              </p>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {leadHistory.map((h) => (
-                  <div
-                    key={h.id}
-                    className="flex items-start gap-2 px-3 py-2 rounded-lg bg-secondary/30 border border-border text-xs"
-                  >
-                    <span className="font-medium text-foreground shrink-0">
-                      {h.action.replace(/_/g, " ")}
-                    </span>
-                    {(h.fromStatus || h.toStatus) && (
-                      <span className="text-muted-foreground">
-                        {h.fromStatus} → {h.toStatus}
-                      </span>
-                    )}
-                    <span className="text-muted-foreground/70 text-[10px] ml-auto shrink-0">
-                      {new Date(h.createdAt).toLocaleString()}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
         </div>
 

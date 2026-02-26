@@ -20,10 +20,9 @@ interface SidebarProps {
   isAdmin?: boolean;
   onLogout?: () => void;
   onManageUsers?: () => void;
-  onNavigateToCrmCheck?: () => void;
 }
 
-export const Sidebar = ({ sessions, isLoading, activeId, onSelect, onNew, onDeleteSession, onRenameSession, userEmail, isAdmin, onLogout, onManageUsers, onNavigateToCrmCheck }: SidebarProps) => {
+export const Sidebar = ({ sessions, isLoading, activeId, onSelect, onNew, onDeleteSession, onRenameSession, userEmail, isAdmin, onLogout, onManageUsers }: SidebarProps) => {
   return (
     <div className="flex flex-col h-full bg-sidebar border-r border-sidebar-border w-72 flex-shrink-0">
       {/* Logo */}
@@ -46,15 +45,6 @@ export const Sidebar = ({ sessions, isLoading, activeId, onSelect, onNew, onDele
           <span className="text-lg leading-none">+</span>
           New Search
         </button>
-        {onNavigateToCrmCheck && (
-          <button
-            onClick={onNavigateToCrmCheck}
-            className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg border border-sidebar-border text-sidebar-foreground/70 hover:border-primary/40 hover:text-primary hover:bg-primary/5 transition-all text-sm font-medium"
-          >
-            <Shield className="w-4 h-4 text-primary/70" />
-            CRM Duplicate Check
-          </button>
-        )}
       </div>
 
       {/* History Header */}

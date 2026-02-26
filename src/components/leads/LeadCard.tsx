@@ -3,18 +3,40 @@ import { Star, Phone, Globe, MapPin, Clock, CheckSquare, Square, ExternalLink, C
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
-function CrmStatusBadge({ status, isNew }: { status?: string; isNew?: boolean }) {
-  if (!status && !isNew) return null;
-  const s = isNew === false ? "SAVED" : (status ?? (isNew ? "NEW" : ""));
+function CrmStatusBadge({ lead }: { lead: Lead }) {
+  const wasChecked = !!(lead.checkedAt || lead.crmCheckedAt);
+  const hasSimilar = wasChecked && (lead.similarMatches?.length ?? 0) > 0 && !lead.duplicateOf;
+  const passedCheck = wasChecked && lead.crmStatus === "NEW" && !lead.duplicateOf;
+  const saved = lead.isNew === false;
+
+  const effectiveStatus = lead.duplicateOf
+    ? "DUPLICATE"
+    : hasSimilar
+      ? "FOUND_SIMILAR"
+      : passedCheck
+        ? "NOT_DUPLICATE"
+        : saved
+          ? "SAVED"
+          : (lead.crmStatus ?? (lead.isNew ? "NEW" : "PENDING"));
+
   const config: Record<string, { label: string; className: string }> = {
+    PENDING: { label: "Pending", className: "bg-muted border-border text-muted-foreground" },
     NEW: { label: "New", className: "bg-primary/15 border-primary/30 text-primary" },
     SAVED: { label: "Saved", className: "bg-success/15 border-success/30 text-success" },
+    NOT_DUPLICATE: { label: "Not Duplicate", className: "bg-success/15 border-success/30 text-success" },
     DUPLICATE: { label: "Duplicate", className: "bg-destructive/15 border-destructive/30 text-destructive" },
-    ALREADY_REACHED: { label: "Reached", className: "bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400" },
+    FOUND_SIMILAR: { label: "Found Similar", className: "bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400" },
+    ALREADY_REACHED: { label: "Already Reached", className: "bg-amber-500/15 border-amber-500/30 text-amber-600 dark:text-amber-400" },
     SKIPPED: { label: "Skipped", className: "bg-muted border-border text-muted-foreground" },
-    PENDING: { label: "Pending", className: "bg-muted border-border text-muted-foreground" },
   };
-  const c = config[s] ?? config.NEW;
+
+  const c = config[effectiveStatus] ?? config.PENDING;
+
+  // If we truly have no status info at all, don't show a pill
+  if (!wasChecked && !saved && !lead.isNew && !lead.crmStatus) {
+    return null;
+  }
+
   return (
     <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-medium", c.className)}>
       {c.label}
@@ -104,7 +126,7 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-secondary border border-border text-muted-foreground font-medium">
               {lead.category}
             </span>
-            <CrmStatusBadge status={lead.crmStatus} isNew={lead.isNew} />
+            <CrmStatusBadge lead={lead} />
             {hasSiblings && (
               <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
                 <PopoverTrigger asChild>

@@ -46,6 +46,7 @@ export default function Index() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(true);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [searchingSessionId, setSearchingSessionId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("dashboard");
   const [isSearching, setIsSearching] = useState(false);
   const [searchMeta, setSearchMeta] = useState<SearchParams | null>(null);
@@ -70,17 +71,13 @@ export default function Index() {
   const [isLoadingLeadsList, setIsLoadingLeadsList] = useState(false);
   const [isSavingAndCheckDuplicate, setIsSavingAndCheckDuplicate] = useState(false);
 
-  useEffect(() => {
-    setMaxStepReached((prev) => Math.max(prev, currentStep));
-  }, [currentStep]);
-
   // Clear stage state when switching sessions
   useEffect(() => {
     setCrmCheckLeads([]);
     setCrmCheckSelectedLeads(new Set());
     setEnrichmentLeads([]);
     setEnrichmentSelectedLeads(new Set());
-    setMaxStepReached(2);
+    setMaxStepReached(1);
   }, [activeSessionId]);
 
   // Fetch sessions
@@ -107,11 +104,7 @@ export default function Index() {
 
   useEffect(() => {
     let mounted = true;
-    fetchSessions().then((list) => {
-      if (mounted && list.length > 0 && !activeSessionId) {
-        setActiveSessionId(list[0].id);
-      }
-    });
+    fetchSessions();
     return () => { mounted = false; };
   }, [fetchSessions]);
 
@@ -144,18 +137,28 @@ export default function Index() {
                   maxLead: session.leadCount,
                 }
         );
-        setViewMode("results");
-        setCurrentStep(2);
-        // Any session with leads should allow navigating to all workflow stages
-        // so the user can click and fetch data from the backend for each stage
-        if (session.leads.length > 0) {
-          const maxLeadStep = Math.max(0, ...session.leads.map((l) => l.currentStep ?? 0));
-          let uiMax = 4; // Enable up to Enrichment for any session with leads
-          if (maxLeadStep >= 7) uiMax = 5;
-          setMaxStepReached(uiMax);
-        } else {
-          setMaxStepReached(2);
-        }
+
+        // Derive which workflow steps should be unlocked from backend stages
+        const stages = (session as { stages?: {
+          create_list?: { unlocked: boolean };
+          crm_check?: { unlocked: boolean };
+          enrichment?: { unlocked: boolean };
+          saved?: { unlocked: boolean };
+          duplicate?: { unlocked: boolean };
+        } }).stages;
+
+        let maxStep = 1;
+        if (stages?.create_list?.unlocked) maxStep = 2;
+        if (stages?.crm_check?.unlocked) maxStep = 3;
+        if (stages?.enrichment?.unlocked) maxStep = 4;
+        if (stages?.saved?.unlocked) maxStep = 5;
+        if (stages?.duplicate?.unlocked) maxStep = 6;
+
+        // Default view when opening a session is the results (create list) stage if available
+        const initialStep = maxStep >= 2 ? 2 : 1;
+        setViewMode(initialStep === 1 ? "dashboard" : "results");
+        setCurrentStep(initialStep);
+        setMaxStepReached(maxStep);
       })
       .catch(() => setLeads([]))
       .finally(() => setIsLoadingSession(false));
@@ -174,16 +177,44 @@ export default function Index() {
         maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
       });
 
+      // Track which session is currently searching
+      setSearchingSessionId(searchSessionId);
+      // Make the new search the active session immediately
+      setActiveSessionId(searchSessionId);
+
+      // Optimistically add this search to sidebar history immediately
+      const sessionTitle =
+        params.mode === "natural"
+          ? params.query
+          : params.mode === "manual"
+            ? `${params.categories.join(", ")} in ${params.location}`
+            : `Nearby search (${params.radiusKm ?? 25} km)`;
+
+      setSessions((prev) => {
+        const withoutDuplicate = prev.filter((s) => s.id !== searchSessionId);
+        return [
+          {
+            id: searchSessionId,
+            title: sessionTitle || "New search",
+            time: "Just now",
+            leadCount: 0,
+          },
+          ...withoutDuplicate,
+        ];
+      });
+
       const poll = async () => {
         const status = await api.search.status(searchSessionId);
         if (status.status === "COMPLETED" && status.leads) {
           setLeads(status.leads.map(toLead));
           setIsSearching(false);
+          setSearchingSessionId(null);
           setCurrentStep(2);
-          setActiveSessionId(searchSessionId);
+          setMaxStepReached((prev) => Math.max(prev, 2));
           fetchSessions();
         } else if (status.status === "FAILED") {
           setIsSearching(false);
+          setSearchingSessionId(null);
           setSearchError("Search failed");
         } else {
           setTimeout(poll, POLL_INTERVAL);
@@ -192,6 +223,7 @@ export default function Index() {
       poll();
     } catch (err) {
       setIsSearching(false);
+      setSearchingSessionId(null);
       let msg = err instanceof Error ? err.message : "Search failed";
       const details = (err as Error & { details?: Record<string, unknown> })?.details;
       if (details && typeof details === "object") {
@@ -222,9 +254,12 @@ export default function Index() {
     setSelectedLeads(new Set());
     setSearchMeta(null);
     setCurrentStep(1);
+    setMaxStepReached(1);
     setActiveLead(null);
     setActiveSessionId(null);
     setSearchError(null);
+    setIsSearching(false);
+    setSearchingSessionId(null);
   };
 
   const handleSaveToCrm = async (leadIds?: string[]) => {
@@ -726,7 +761,10 @@ export default function Index() {
               sessions={sessions}
               isLoading={isLoadingSessions}
               activeId={activeSessionId ?? ""}
-              onSelect={(id) => setActiveSessionId(id)}
+              onSelect={(id) => {
+                // Switch visible session; search may still be running for another session
+                setActiveSessionId(id);
+              }}
               onNew={handleNew}
               onDeleteSession={handleDeleteSession}
               onRenameSession={(id, title) => {
@@ -737,7 +775,6 @@ export default function Index() {
               isAdmin={isAdmin}
               onLogout={logout}
               onManageUsers={isAdmin ? () => setManageUsersOpen(true) : undefined}
-              onNavigateToCrmCheck={navigateToCrmCheck}
             />
           </div>
         )}
@@ -845,6 +882,7 @@ export default function Index() {
                 onClearSelection={() => setCrmCheckSelectedLeads(new Set())}
                 onBack={() => { setViewMode("results"); setCurrentStep(2); }}
                 onMoveToEnrichment={moveToEnrichment}
+                onViewLead={(lead) => setActiveLead(lead)}
               />
             ) : (
               <ResultsView
@@ -855,7 +893,7 @@ export default function Index() {
                 onViewLead={setActiveLead}
                 searchMeta={searchMeta}
                 sessionCrmStats={sessionCrmStats}
-                isSearching={isSearching}
+                isSearching={isSearching && (!!searchingSessionId && activeSessionId === searchingSessionId)}
                 isLoadingSession={isLoadingSession}
                 searchError={searchError}
                 onSaveToCrm={handleSaveToCrm}
@@ -918,6 +956,7 @@ function CrmCheckView({
   onClearSelection,
   onBack,
   onMoveToEnrichment,
+  onViewLead,
 }: {
   leads: CrmCheckLead[];
   isLoading?: boolean;
@@ -934,6 +973,7 @@ function CrmCheckView({
   onClearSelection: () => void;
   onBack: () => void;
   onMoveToEnrichment: (leadIds: string[]) => void;
+  onViewLead: (lead: CrmCheckLead) => void;
 }) {
   const [filter, setFilter] = useState<CrmCheckFilter>("all");
   const [duplicateSimilarLead, setDuplicateSimilarLead] = useState<CrmCheckLead | null>(null);
@@ -1033,16 +1073,6 @@ function CrmCheckView({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => onRunAllChecks()}
-            disabled={isCrmCheckLoading}
-            className="gap-2"
-          >
-            {isChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-            Check All for Duplicate
-          </Button>
           {selectedLeads.size > 0 && (
             <Button
               variant="outline"
@@ -1087,7 +1117,16 @@ function CrmCheckView({
         <span className="w-px h-5 bg-border" />
         <div className="flex items-center gap-2">
           {selectedLeads.size > 0 && (
-            <span className="text-xs text-muted-foreground">{selectedLeads.size} selected</span>
+            <>
+              <span className="text-xs text-muted-foreground">{selectedLeads.size} selected</span>
+              <button
+                type="button"
+                onClick={onClearSelection}
+                className="text-xs text-destructive hover:underline font-semibold"
+              >
+                Deselect All
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -1144,11 +1183,21 @@ function CrmCheckView({
       </div>
 
       {/* Lead cards */}
-      <div className="space-y-4">
+      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
         {filteredLeads.length === 0 ? (
           <div className="py-12 text-center rounded-xl border border-dashed border-border bg-muted/30">
             <p className="text-sm text-muted-foreground">
-              {filter === "all" ? "No leads" : `No leads match "${filter === "to-save" ? "To Save" : filter === "saved" ? "Saved" : filter === "duplicate" ? "Duplicate" : "Found Similar"}" filter`}
+              {filter === "all"
+                ? "No leads"
+                : `No leads match "${
+                    filter === "to-save"
+                      ? "To Save"
+                      : filter === "saved"
+                        ? "Saved"
+                        : filter === "duplicate"
+                          ? "Duplicate"
+                          : "Found Similar"
+                  }" filter`}
             </p>
             {filter !== "all" && (
               <button
@@ -1161,223 +1210,15 @@ function CrmCheckView({
             )}
           </div>
         ) : (
-        filteredLeads.map((lead) => (
-          <div
-            key={lead.id}
-            onClick={() => onToggle(lead.id)}
-            className={cn(
-              "rounded-xl border p-5 bg-card transition-all cursor-pointer",
-              selectedLeads.has(lead.id) && "ring-2 ring-primary/50 border-primary/40 bg-primary/5",
-              lead.crmStatus === "NEW" && !selectedLeads.has(lead.id) && "border-primary/30 bg-primary/5",
-              lead.crmStatus === "FOUND_SIMILAR" && !selectedLeads.has(lead.id) && "border-amber-500/20 bg-amber-500/5",
-              lead.crmStatus === "DUPLICATE" && !selectedLeads.has(lead.id) && "border-destructive/30 bg-destructive/5",
-              lead.isNew === false && !selectedLeads.has(lead.id) && "border-success/30 bg-success/5"
-            )}
-          >
-            <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-              <div className="flex-1 min-w-0 flex items-start gap-3">
-                <div className="flex-shrink-0 pt-0.5">
-                  {selectedLeads.has(lead.id) ? (
-                    <CheckSquare className="w-4 h-4 text-primary" />
-                  ) : (
-                    <Square className="w-4 h-4 text-muted-foreground/50" />
-                  )}
-                </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-start gap-3 flex-wrap">
-                  <div>
-                    <h3 className="font-semibold text-foreground">{lead.name}</h3>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-secondary border border-border text-muted-foreground">
-                        {lead.category}
-                      </span>
-                      {lead.rating > 0 && (
-                        <span className="text-xs flex items-center gap-1 text-warning">
-                          <Star className="w-3 h-3 fill-warning" />
-                          {lead.rating}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <CrmCheckStatusBadge lead={lead} />
-                  {(lead.crmStatus === "NEW" || lead.crmStatus === "FOUND_SIMILAR") && (lead.checkedAt || lead.crmCheckedAt) && !lead.duplicateOf && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-success/15 border-success/30 text-success">
-                      {lead.similarMatches?.length ? "Review similar, then enrich" : "Proceed to Enrichment"}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-4 space-y-2 text-sm text-muted-foreground">
-                  {lead.address && (
-                    <div className="flex items-start gap-2">
-                      <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      <span className="break-words">{lead.address}</span>
-                    </div>
-                  )}
-                  {lead.phone && (
-                    <div className="flex items-center gap-2">
-                      <Phone className="w-4 h-4 flex-shrink-0" />
-                      <span>{lead.phone}</span>
-                    </div>
-                  )}
-                  {lead.website && (
-                    <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4 flex-shrink-0" />
-                      <a
-                        href={`https://${lead.website}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary hover:underline"
-                      >
-                        {lead.website}
-                      </a>
-                    </div>
-                  )}
-                </div>
-                {lead.checkMessage && !lead.duplicateOf && (
-                  <p className="mt-2 text-xs text-muted-foreground">{lead.checkMessage}</p>
-                )}
-                {/* Enrichment sources status (from session API) */}
-                {lead.enrichmentSources && lead.enrichmentSources.length > 0 && (
-                  <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                    {lead.enrichmentSources.map((s) => (
-                      <span
-                        key={s.source}
-                        className={cn(
-                          "text-[10px] px-1.5 py-0.5 rounded border font-medium",
-                          s.done ? "bg-success/10 border-success/30 text-success" : "bg-muted/50 border-border text-muted-foreground"
-                        )}
-                        title={s.done ? "Done" : "Pending"}
-                      >
-                        {s.source.replace(/_/g, " ")} {s.done ? "✓" : "○"}
-                      </span>
-                    ))}
-                  </div>
-                )}
-                {/* Inline similar leads preview */}
-                {lead.similarMatches && lead.similarMatches.length > 0 && !lead.duplicateOf && (
-                  <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                    <p className="text-xs font-semibold text-amber-600 dark:text-amber-400 mb-2">
-                      {lead.similarMatches.length} similar lead{lead.similarMatches.length !== 1 ? "s" : ""} found
-                    </p>
-                    <ul className="space-y-1.5 max-h-24 overflow-y-auto">
-                      {lead.similarMatches.slice(0, 5).map((m) => (
-                        <li key={m.id} className="text-xs flex items-start gap-2">
-                          <span className="font-medium text-foreground truncate flex-1 min-w-0">{m.name}</span>
-                          <span className="text-[10px] text-amber-600 dark:text-amber-400 flex-shrink-0">({m.score}%)</span>
-                        </li>
-                      ))}
-                      {lead.similarMatches.length > 5 && (
-                        <li className="text-[10px] text-muted-foreground">+{lead.similarMatches.length - 5} more</li>
-                      )}
-                    </ul>
-                  </div>
-                )}
-              </div>
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                {((lead.crmStatus === "PENDING" || !lead.checkedAt) || lead.crmStatus === "NEW" || lead.crmStatus === "FOUND_SIMILAR") && lead.isNew !== false && (
-                  <div className="flex flex-col gap-2">
-                    {lead.similarMatches && lead.similarMatches.length > 0 && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); setDuplicateSimilarLead(lead); }}
-                        className="gap-2"
-                      >
-                        <AlertTriangle className="w-4 h-4" />
-                        View Similar Leads ({lead.similarMatches.length})
-                      </Button>
-                    )}
-                    {!((lead.checkedAt || lead.crmCheckedAt) && lead.crmStatus === "NEW" && !lead.duplicateOf) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onRunCheck(lead)}
-                        disabled={lead.isChecking}
-                        className="gap-2"
-                      >
-                        {lead.isChecking ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Search className="w-4 h-4" />
-                        )}
-                        {lead.isChecking ? "Checking..." : "Check Duplication"}
-                      </Button>
-                    )}
-                  </div>
-                )}
-                {lead.crmStatus === "DUPLICATE" && (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-destructive text-sm">
-                      <XCircle className="w-4 h-4" />
-                      Duplicate
-                    </div>
-                    {lead.duplicateOf && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); setDuplicateSimilarLead(lead); }}
-                        className="gap-2"
-                      >
-                        <Search className="w-4 h-4" />
-                        View Duplicate
-                      </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onRunCheck(lead)}
-                      disabled={lead.isChecking}
-                      className="gap-2"
-                    >
-                      {lead.isChecking ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <Search className="w-4 h-4" />
-                      )}
-                      {lead.isChecking ? "Checking..." : "Re-check Duplication"}
-                    </Button>
-                  </div>
-                )}
-                {lead.isNew === false && (
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center gap-2 text-success text-sm">
-                      <CheckCircle2 className="w-4 h-4" />
-                      Saved to CRM
-                    </div>
-                    {(lead.duplicateOf || (lead.similarMatches && lead.similarMatches.length > 0)) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => { e.stopPropagation(); setDuplicateSimilarLead(lead); }}
-                        className="gap-2"
-                      >
-                        <Search className="w-4 h-4" />
-                        {lead.duplicateOf ? "View Duplicate" : `View Similar Leads (${lead.similarMatches!.length})`}
-                      </Button>
-                    )}
-                    {!((lead.checkedAt || lead.crmCheckedAt) && lead.crmStatus === "NEW" && !lead.duplicateOf) && (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onRunCheck(lead)}
-                        disabled={lead.isChecking}
-                        className="gap-2"
-                      >
-                        {lead.isChecking ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Search className="w-4 h-4" />
-                        )}
-                        {lead.isChecking ? "Checking..." : "Check Duplication"}
-                      </Button>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        ))
+          filteredLeads.map((lead) => (
+            <ClickableLeadCard
+              key={lead.id}
+              lead={lead}
+              selected={selectedLeads.has(lead.id)}
+              onToggle={onToggle}
+              onView={onViewLead}
+            />
+          ))
         )}
 
       {/* Duplicate / Similar leads popup */}
@@ -2102,19 +1943,12 @@ function ResultsView({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => onClearSelection()}
-              className="text-xs px-4 py-2 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-secondary transition-all"
-            >
-              Clear
-            </button>
-            <button
-              type="button"
               onClick={() => onRemoveLeads(Array.from(selectedLeads))}
               disabled={isRemoving}
               className="text-xs px-4 py-2 rounded-lg border border-destructive/50 text-destructive hover:bg-destructive/10 transition-all flex items-center gap-1.5 disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Remove Selected
+              Delete Lead
             </button>
             <button
               type="button"
@@ -2136,14 +1970,6 @@ function ResultsView({
                 <Shield className="w-3.5 h-3.5" />
               )}
               {isMovingToCrmCheck ? "Moving to CRM Check..." : "Move to CRM Check"}
-            </button>
-            <button
-              type="button"
-              onClick={() => onSaveToCrm()}
-              className="text-xs px-4 py-2 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-all flex items-center gap-1.5 shadow-[0_0_16px_hsl(214_100%_58%/0.25)]"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Save to CRM
             </button>
           </div>
         </div>

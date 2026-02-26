@@ -51,7 +51,11 @@ async function request<T>(
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, {
+    cache: "no-store",
+    ...options,
+    headers,
+  });
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -179,6 +183,11 @@ export interface SessionListItem {
   time: string;
 }
 
+export interface SessionStagesInfo {
+  count: number;
+  unlocked: boolean;
+}
+
 export interface SessionDetailResponse extends SessionListItem {
   mode: string;
   location: string | null;
@@ -186,6 +195,15 @@ export interface SessionDetailResponse extends SessionListItem {
   status: string;
   savedCount?: number;
   duplicateCount?: number;
+  crmCheckCount?: number;
+  enrichmentCount?: number;
+  stages?: {
+    create_list?: SessionStagesInfo;
+    crm_check?: SessionStagesInfo;
+    enrichment?: SessionStagesInfo;
+    saved?: SessionStagesInfo;
+    duplicate?: SessionStagesInfo;
+  };
   userId: string | null;
   user?: { id: string; email: string; name: string };
   leads: LeadResponse[];

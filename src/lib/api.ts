@@ -279,7 +279,18 @@ export interface RemoveLeadsRequest {
   leadIds: string[];
 }
 
-/** POST /api/v1/leads/move-to-enrichment — Response */
+/** POST /api/v1/leads/move-to-collect-details — Response */
+export interface MoveToCollectDetailsResponse {
+  moved: number;
+  skipped: number;
+  failed: number;
+  results: Array<
+    | { leadId: string; status: "MOVED"; previousStep: number }
+    | { leadId: string; status: "SKIPPED"; reason: string }
+    | { leadId: string; status: "FAILED"; error: string }
+  >;
+}
+
 export interface MoveToEnrichmentResponse {
   moved: number;
   skipped: number;
@@ -413,7 +424,7 @@ export const api = {
       request<{ sessions: SessionListItem[]; total: number }>(
         `/api/v1/sessions?limit=${limit}&offset=${offset}`
       ),
-    get: (sessionId: string, stage?: "crm_check" | "enrichment" | "saved" | "duplicate") =>
+    get: (sessionId: string, stage?: "crm_check" | "enrichment" | "collect_details" | "saved" | "duplicate") =>
       request<SessionDetailResponse>(
         `/api/v1/sessions/${sessionId}${stage ? `?stage=${stage}` : ""}`
       ),
@@ -455,6 +466,11 @@ export const api = {
       }),
     moveToEnrichment: (leadIds: string[]) =>
       request<MoveToEnrichmentResponse>("/api/v1/leads/move-to-enrichment", {
+        method: "POST",
+        body: JSON.stringify({ leadIds }),
+      }),
+    moveToCollectDetails: (leadIds: string[]) =>
+      request<MoveToCollectDetailsResponse>("/api/v1/leads/move-to-collect-details", {
         method: "POST",
         body: JSON.stringify({ leadIds }),
       }),

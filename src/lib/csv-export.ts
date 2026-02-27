@@ -42,6 +42,52 @@ export function generateLeadsCsv(leads: Lead[]): string {
   return [header, ...rows].join("\n");
 }
 
+/** Generate full CSV with all lead details (for Final List export) */
+export function generateFullLeadsCsv(leads: Lead[]): string {
+  const columns = [
+    "ID",
+    "Rank",
+    "Company Name",
+    "Category",
+    "Rating",
+    "Address",
+    "Phone",
+    "Website",
+    "Hours",
+    "Email",
+    "LinkedIn",
+    "Instagram",
+    "Contact Person",
+    "CRM Status",
+    "Enrichment Status",
+  ];
+
+  const header = columns.join(",");
+  const rows = leads
+    .sort((a, b) => a.rank - b.rank)
+    .map((lead) =>
+      [
+        escapeCsv(lead.id),
+        lead.rank,
+        escapeCsv(lead.name),
+        escapeCsv(lead.category),
+        lead.rating,
+        escapeCsv(lead.address),
+        lead.phone ? escapeCsv(lead.phone) : "",
+        lead.website ? escapeCsv(lead.website) : "",
+        lead.hours ? escapeCsv(lead.hours) : "",
+        lead.email ? escapeCsv(lead.email) : "",
+        lead.linkedin ? escapeCsv(lead.linkedin) : "",
+        lead.instagram ? escapeCsv(lead.instagram) : "",
+        lead.contactPerson ? escapeCsv(lead.contactPerson) : "",
+        lead.crmStatus ? escapeCsv(lead.crmStatus) : "",
+        lead.enrichmentStatus ? escapeCsv(lead.enrichmentStatus) : "",
+      ].join(",")
+    );
+
+  return [header, ...rows].join("\n");
+}
+
 /** Trigger CSV file download (with UTF-8 BOM for Excel compatibility) */
 export function downloadCsv(content: string, filename = "leads-export") {
   const BOM = "\uFEFF";

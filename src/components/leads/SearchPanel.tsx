@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { ChevronDown, Zap, SlidersHorizontal, Loader2, LocateFixed } from "lucide-react";
 import { LocationAutocomplete } from "./LocationAutocomplete";
+import { reverseGeocode } from "@/lib/google-maps";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -86,6 +87,14 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
     try {
       const pos = await getBestPosition(100, 15_000);
       const { latitude, longitude } = pos.coords;
+      const hasGoogleKey = !!import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+      if (hasGoogleKey) {
+        const name = await reverseGeocode(latitude, longitude);
+        if (name) {
+          setLocation(name);
+          return;
+        }
+      }
       const res = await fetch(
         `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&zoom=10`
       );
@@ -148,7 +157,6 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
           placeholder="e.g. Pune, Mumbai"
           disabled={isSearching}
         />
-        <p className="text-[10px] text-muted-foreground/60">Search radius: 25 km</p>
       </div>
 
       {/* Business Category */}

@@ -1,17 +1,18 @@
 import { useState, useEffect } from "react";
 import {
-  X, Star, Phone, Globe, MapPin, Clock, ExternalLink,
-  CheckCircle2, User, Building2, Mail,
-  Linkedin, Instagram, ArrowRight, Trash2
+  X, Star, Phone, Globe, MapPin, Clock,
+  CheckCircle2, User, Building2, Mail, Trash2
 } from "lucide-react";
 import { Lead } from "./LeadCard";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
+import { formatHoursWithIST } from "@/lib/hours-to-ist";
+import { LinkedinLogo, InstagramLogo } from "./BrandLogos";
 
-const ENRICHMENT_SOURCE_MAP: Record<string, { icon: typeof Globe; label: string }> = {
+const ENRICHMENT_SOURCE_MAP: Record<string, { icon: React.ElementType; label: string }> = {
   WEBSITE: { icon: Globe, label: "Company Website" },
-  LINKEDIN: { icon: Linkedin, label: "LinkedIn" },
-  INSTAGRAM: { icon: Instagram, label: "Instagram" },
+  LINKEDIN: { icon: LinkedinLogo, label: "LinkedIn" },
+  INSTAGRAM: { icon: InstagramLogo, label: "Instagram" },
   GOOGLE_MAPS: { icon: MapPin, label: "Google Maps" },
 };
 
@@ -126,49 +127,49 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto">
-          {/* Contact Info */}
+          {/* Contact Information - Company at top, then Address, Phone, etc. */}
           <div className="p-6 border-b border-border">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">Contact Information</p>
-            <div className="space-y-3">
-              <InfoRow icon={MapPin} label="Address" value={lead.address} />
-              {lead.phone && <InfoRow icon={Phone} label="Phone" value={lead.phone} />}
-              {(fullLead?.email || lead.email) && (
-                <InfoRow icon={Mail} label="Email" value={(fullLead?.email ?? lead.email)!} isMailto />
-              )}
-              {(lead.website || fullLead?.website) && (
-                <InfoRow icon={Globe} label="Website" value={(lead.website || fullLead?.website)!} isLink />
-              )}
-              {(fullLead?.linkedin || lead.linkedin) && (
-                <InfoRow icon={Linkedin} label="LinkedIn" value={(fullLead?.linkedin ?? lead.linkedin)!} isLink />
-              )}
-              {(fullLead?.instagram || lead.instagram) && (
-                <InfoRow icon={Instagram} label="Instagram" value={(fullLead?.instagram ?? lead.instagram)!} isLink />
-              )}
-              {(fullLead?.contactPerson || lead.contactPerson) && (
-                <InfoRow icon={User} label="Contact Person" value={(fullLead?.contactPerson ?? lead.contactPerson)!} />
-              )}
-              {lead.hours && <InfoRow icon={Clock} label="Hours" value={lead.hours} />}
-            </div>
-          </div>
-
-          {/* Lead Data Fields */}
-          <div className="p-6 border-b border-border">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-3">
-              Lead Data (Step 3 Fields)
-            </p>
             <div className="space-y-2.5">
-              <DataField icon={Building2} label="Company Name" value={lead.name} filled />
-              <DataField icon={Building2} label="Customer Type" value={lead.category} filled />
-              <DataField icon={Phone} label="Phone Number" value={lead.phone || "—"} filled={!!lead.phone} />
-              <DataField icon={Mail} label="Email Address" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} />
-              <DataField icon={Globe} label="Website" value={fullLead?.website ?? lead.website ?? "—"} filled={!!(fullLead?.website || lead.website)} />
-              <DataField icon={Linkedin} label="LinkedIn" value={fullLead?.linkedin ?? lead.linkedin ?? "—"} filled={!!(fullLead?.linkedin || lead.linkedin)} />
-              <DataField icon={Instagram} label="Instagram" value={fullLead?.instagram ?? lead.instagram ?? "—"} filled={!!(fullLead?.instagram || lead.instagram)} />
-              <DataField icon={MapPin} label="Full Address" value={lead.address} filled />
+              <ContactField icon={Building2} label="Company" value={`${lead.name} · ${lead.category}`} filled />
+              <ContactField icon={MapPin} label="Address" value={lead.address} filled={!!lead.address} />
+              <ContactField icon={Phone} label="Phone" value={lead.phone ?? "—"} filled={!!lead.phone} />
+              <ContactField icon={Mail} label="Email" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} isMailto />
+              <ContactField icon={User} label="Contact Person" value={fullLead?.contactPerson ?? lead.contactPerson ?? "—"} filled={!!(fullLead?.contactPerson || lead.contactPerson)} />
+              <ContactField icon={Clock} label="Hours" value={lead.hours ? formatHoursWithIST(lead.hours, lead.address ?? "") : "—"} filled={!!lead.hours} />
             </div>
           </div>
 
         </div>
+
+        {/* Social links - separate buttons at bottom */}
+        {(fullLead?.website || lead.website || fullLead?.linkedin || lead.linkedin || fullLead?.instagram || lead.instagram) && (
+          <div className="p-4 border-t border-border bg-surface-1 flex flex-wrap gap-2">
+            {(fullLead?.website || lead.website) && (
+              <SocialButton
+                href={(fullLead?.website ?? lead.website)!.startsWith("http") ? (fullLead?.website ?? lead.website)! : `https://${fullLead?.website ?? lead.website}`}
+                icon={Globe}
+                label="Website"
+              />
+            )}
+            {(fullLead?.linkedin || lead.linkedin) && (
+              <SocialButton
+                href={(fullLead?.linkedin ?? lead.linkedin)!.startsWith("http") ? (fullLead?.linkedin ?? lead.linkedin)! : `https://${fullLead?.linkedin ?? lead.linkedin}`}
+                icon={LinkedinLogo}
+                label="LinkedIn"
+                useBrandLogo
+              />
+            )}
+            {(fullLead?.instagram || lead.instagram) && (
+              <SocialButton
+                href={(fullLead?.instagram ?? lead.instagram)!.startsWith("http") ? (fullLead?.instagram ?? lead.instagram)! : `https://${fullLead?.instagram ?? lead.instagram}`}
+                icon={InstagramLogo}
+                label="Instagram"
+                useBrandLogo
+              />
+            )}
+          </div>
+        )}
 
         {/* Footer actions */}
         <div className="p-4 border-t border-border bg-surface-1 flex flex-col gap-2">
@@ -188,63 +189,100 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
   );
 };
 
-const InfoRow = ({
-  icon: Icon, label, value, isLink, isMailto
+const SocialButton = ({
+  href,
+  icon: Icon,
+  label,
+  useBrandLogo,
 }: {
-  icon: React.ElementType; label: string; value: string; isLink?: boolean; isMailto?: boolean;
+  href: string;
+  icon: React.ElementType;
+  label: string;
+  useBrandLogo?: boolean;
+}) => (
+  <a
+    href={href}
+    target="_blank"
+    rel="noopener noreferrer"
+    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-border bg-card hover:bg-secondary transition-colors text-sm font-medium"
+  >
+    {useBrandLogo ? <Icon size={18} /> : <Icon className="w-4 h-4" />}
+    {label}
+  </a>
+);
+
+const ContactField = ({
+  icon: Icon,
+  label,
+  value,
+  filled,
+  isLink,
+  isMailto,
+  useBrandLogo,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  filled: boolean;
+  isLink?: boolean;
+  isMailto?: boolean;
+  useBrandLogo?: boolean;
 }) => {
-  const href = isMailto
-    ? `mailto:${value}`
-    : isLink
-      ? (value.startsWith("http://") || value.startsWith("https://") ? value : `https://${value}`)
-      : undefined;
-  const displayValue = isLink
-    ? value.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "")
-    : value;
+  const isEmpty = value === "—" || !value?.trim();
+  const hasLink = filled && (isLink || isMailto) && !isEmpty;
+  const href = hasLink
+    ? isMailto
+      ? `mailto:${value}`
+      : (value.startsWith("http://") || value.startsWith("https://") ? value : `https://${value}`)
+    : undefined;
+  const displayValue = isLink && value ? value.replace(/^https?:\/\/(www\.)?/, "").replace(/\/$/, "") : value;
+  const visitLabel = label === "Website" ? "Visit Website" : label === "LinkedIn" ? "Visit LinkedIn" : label === "Instagram" ? "Visit Instagram" : label === "Email" ? "Send Email" : "Open";
 
   return (
-    <div className="flex items-start gap-3">
-      <div className="w-7 h-7 rounded-md bg-secondary flex items-center justify-center flex-shrink-0 mt-0.5">
-        <Icon className="w-3.5 h-3.5 text-muted-foreground" />
+    <div
+      className={cn(
+        "flex items-center gap-3 px-3.5 py-2.5 rounded-lg border transition-colors",
+        filled ? "bg-success/10 border-success/30" : "bg-muted/50 border-border/50"
+      )}
+    >
+      <div
+        className={cn(
+          "w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0",
+          filled ? "bg-success/20" : "bg-muted"
+        )}
+      >
+        {useBrandLogo ? (
+          <span className={cn("flex items-center justify-center", !filled && "opacity-40 grayscale")}>
+            <Icon size={16} />
+          </span>
+        ) : (
+          <Icon className={cn("w-4 h-4 flex-shrink-0", filled ? "text-success" : "text-muted-foreground/50")} />
+        )}
       </div>
-      <div className="min-w-0">
+      <div className="flex-1 min-w-0">
         <p className="text-[10px] text-muted-foreground/60 uppercase font-medium tracking-wider">{label}</p>
-        {href ? (
+        {hasLink && href ? (
           <a
             href={href}
             target={isMailto ? undefined : "_blank"}
             rel={isMailto ? undefined : "noopener noreferrer"}
-            className="text-sm text-primary hover:underline flex items-center gap-1 mt-0.5 break-all"
+            className="mt-1 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
           >
-            {displayValue}
-            <ExternalLink className="w-3 h-3 flex-shrink-0" />
+            {useBrandLogo ? <Icon size={14} /> : <Icon className="w-3.5 h-3.5" />}
+            {visitLabel}
           </a>
         ) : (
-          <p className="text-sm text-foreground mt-0.5 leading-snug">{value}</p>
+          <p className={cn("text-sm mt-0.5 leading-snug break-words", filled ? "text-foreground" : "text-muted-foreground/60")}>
+            {value}
+          </p>
         )}
       </div>
+      {filled ? (
+        <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
+      ) : (
+        <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/30 flex-shrink-0" />
+      )}
     </div>
   );
 };
 
-const DataField = ({
-  icon: Icon, label, value, filled
-}: {
-  icon: React.ElementType; label: string; value: string; filled: boolean;
-}) => (
-  <div className={cn(
-    "flex items-center gap-3 px-3.5 py-2.5 rounded-lg border",
-    filled ? "bg-surface-2 border-border" : "bg-secondary/20 border-border/50"
-  )}>
-    <Icon className={cn("w-3.5 h-3.5 flex-shrink-0", filled ? "text-primary/70" : "text-muted-foreground/30")} />
-    <div className="flex-1 min-w-0">
-      <p className="text-[10px] text-muted-foreground/50 font-medium">{label}</p>
-      <p className={cn("text-xs font-medium truncate mt-0.5", filled ? "text-foreground" : "text-muted-foreground/30")}>{value}</p>
-    </div>
-    {filled ? (
-      <CheckCircle2 className="w-3.5 h-3.5 text-success flex-shrink-0" />
-    ) : (
-      <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/20 flex-shrink-0" />
-    )}
-  </div>
-);

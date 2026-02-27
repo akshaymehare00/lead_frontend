@@ -48,6 +48,25 @@ export interface QueryPrediction {
 }
 
 /**
+ * Reverse geocode: convert lat/lng to a formatted address (same format as Places Autocomplete).
+ * Uses Google Geocoder for consistency with autocomplete suggestions.
+ */
+export async function reverseGeocode(lat: number, lng: number): Promise<string | null> {
+  const places = await loadGooglePlaces();
+  const geocoder = new google.maps.Geocoder();
+  return new Promise((resolve) => {
+    geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+      if (status !== google.maps.GeocoderStatus.OK || !results?.[0]) {
+        resolve(null);
+        return;
+      }
+      // Use formatted_address for consistency with autocomplete (e.g. "Pune, Maharashtra, India")
+      resolve(results[0].formatted_address ?? null);
+    });
+  });
+}
+
+/**
  * Calls Google Places Query Autocomplete via the JS API.
  * Falls back gracefully if API key is missing.
  */

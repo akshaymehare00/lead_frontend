@@ -224,6 +224,40 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
         )}
       </div>
 
+      {/* Duplicate of — shown when Duplicate in CRM check */}
+      {lead.duplicateOf && (
+        <div className="mt-2 pt-2 border-t border-destructive/20 space-y-1 flex-shrink-0">
+          <p className="text-[10px] font-semibold text-destructive uppercase tracking-wider">Duplicate of</p>
+          <p className="text-xs font-medium text-foreground">{lead.duplicateOf.name}</p>
+          {lead.duplicateOf.crmId && (
+            <p className="text-[10px] text-muted-foreground">CRM ID: {lead.duplicateOf.crmId}</p>
+          )}
+        </div>
+      )}
+
+      {/* Similar matches — shown when Found Similar in CRM check */}
+      {!lead.duplicateOf && lead.similarMatches && lead.similarMatches.length > 0 && (
+        <div className="mt-2 pt-2 border-t border-amber-500/20 space-y-1 flex-shrink-0">
+          <p className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
+            Similar to
+          </p>
+          {lead.similarMatches.map((m) => (
+            <div key={m.id} className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{m.name}</span>
+              {m.source === "duplicate_dummy" && (
+                <span className="ml-1 text-[10px] text-muted-foreground/70">(CRM)</span>
+              )}
+              {m.score != null && (
+                <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">{m.score}% match</span>
+              )}
+              {m.matchedFields?.length > 0 && (
+                <p className="text-[10px] text-muted-foreground/80 mt-0.5">Matched: {m.matchedFields.join(", ")}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
     </div>
   );
 };

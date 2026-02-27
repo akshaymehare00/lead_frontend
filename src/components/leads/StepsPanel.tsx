@@ -7,8 +7,7 @@ const STEPS = [
   { id: 3, title: "Create Lead List", desc: "Compile initial data" },
   { id: 4, title: "CRM Duplicate Check", desc: "Verify uniqueness" },
   { id: 5, title: "Enrichment Prep", desc: "Move verified leads" },
-  { id: 6, title: "Collect Lead Details", desc: "Enrich with data" },
-  { id: 7, title: "Finalize Outreach", desc: "Ready for sales" },
+  { id: 6, title: "Final List", desc: "Enrich with data" },
 ];
 
 interface StepsPanelProps {

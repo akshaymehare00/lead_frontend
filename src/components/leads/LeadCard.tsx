@@ -127,6 +127,11 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
               {lead.category}
             </span>
             <CrmStatusBadge lead={lead} />
+            {lead.currentStep != null && lead.currentStep >= 6 && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full border font-medium bg-violet-500/15 border-violet-500/30 text-violet-600 dark:text-violet-400">
+                In Enrichment
+              </span>
+            )}
             {hasSiblings && (
               <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
                 <PopoverTrigger asChild>

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Loader2, MapPin } from "lucide-react";
 import { api, type PlaceSuggestion } from "@/lib/api";
+import { queryAutocomplete, type QueryPrediction } from "@/lib/google-maps";
 import { cn } from "@/lib/utils";
 
 interface LocationAutocompleteProps {
@@ -11,7 +12,31 @@ interface LocationAutocompleteProps {
   className?: string;
 }
 
+/** Unified suggestion type for both Google Places and backend fallback */
+interface Suggestion {
+  id: string;
+  name: string;
+  canonicalName: string;
+}
+
 const DEBOUNCE_MS = 300;
+const SUGGESTION_LIMIT = 5;
+
+function mapGoogleToSuggestion(p: QueryPrediction): Suggestion {
+  return {
+    id: p.placeId ?? p.description,
+    name: p.mainText,
+    canonicalName: p.description,
+  };
+}
+
+function mapBackendToSuggestion(s: PlaceSuggestion): Suggestion {
+  return {
+    id: s.id,
+    name: s.name,
+    canonicalName: s.canonicalName,
+  };
+}
 
 export function LocationAutocomplete({
   value,
@@ -21,7 +46,7 @@ export function LocationAutocomplete({
   className,
 }: LocationAutocompleteProps) {
   const [inputValue, setInputValue] = useState(value);
-  const [suggestions, setSuggestions] = useState<PlaceSuggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -41,13 +66,31 @@ export function LocationAutocomplete({
     const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const { suggestions: list } = await api.places.autocomplete(q, 5);
-        setSuggestions(list);
-        const isAlreadySelected = list.some((s) => s.canonicalName === q);
-        setOpen(list.length > 0 && !isAlreadySelected);
+        const hasGoogleKey = !!import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
+        if (hasGoogleKey) {
+          const list = await queryAutocomplete(q);
+          const mapped = list.slice(0, SUGGESTION_LIMIT).map(mapGoogleToSuggestion);
+          setSuggestions(mapped);
+          const isAlreadySelected = mapped.some((s) => s.canonicalName === q);
+          setOpen(mapped.length > 0 && !isAlreadySelected);
+        } else {
+          const { suggestions: list } = await api.places.autocomplete(q, SUGGESTION_LIMIT);
+          const mapped = list.map(mapBackendToSuggestion);
+          setSuggestions(mapped);
+          const isAlreadySelected = mapped.some((s) => s.canonicalName === q);
+          setOpen(mapped.length > 0 && !isAlreadySelected);
+        }
       } catch {
-        setSuggestions([]);
-        setOpen(false);
+        try {
+          const { suggestions: list } = await api.places.autocomplete(q, SUGGESTION_LIMIT);
+          const mapped = list.map(mapBackendToSuggestion);
+          setSuggestions(mapped);
+          const isAlreadySelected = mapped.some((s) => s.canonicalName === q);
+          setOpen(mapped.length > 0 && !isAlreadySelected);
+        } catch {
+          setSuggestions([]);
+          setOpen(false);
+        }
       } finally {
         setLoading(false);
       }
@@ -66,7 +109,7 @@ export function LocationAutocomplete({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleSelect = (suggestion: PlaceSuggestion) => {
+  const handleSelect = (suggestion: Suggestion) => {
     onChange(suggestion.canonicalName);
     setInputValue(suggestion.canonicalName);
     setOpen(false);

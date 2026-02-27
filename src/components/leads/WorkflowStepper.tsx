@@ -5,9 +5,8 @@ const STEPS = [
   { id: 1, title: "Home" },
   { id: 2, title: "Create List" },
   { id: 3, title: "CRM Check" },
-  { id: 4, title: "Enrichment" },
-  { id: 5, title: "Collect Details" },
-  { id: 6, title: "Finalize Outreach" },
+  { id: 4, title: "Enrichment List" },
+  { id: 5, title: "Final List" },
 ];
 
 interface WorkflowStepperProps {

@@ -117,6 +117,7 @@ export default function Index() {
       return;
     }
     setIsLoadingSession(true);
+    const isSearchingThisSession = searchingSessionId === activeSessionId;
     api.sessions
       .get(activeSessionId)
       .then((session) => {
@@ -155,14 +156,16 @@ export default function Index() {
         if (stages?.duplicate?.unlocked) maxStep = 6;
 
         // Default view when opening a session is the results (create list) stage if available
+        // Don't switch back to dashboard if we're actively searching this session (search in progress)
         const initialStep = maxStep >= 2 ? 2 : 1;
-        setViewMode(initialStep === 1 ? "dashboard" : "results");
-        setCurrentStep(initialStep);
-        setMaxStepReached(maxStep);
+        const shouldShowResults = initialStep === 2 || isSearchingThisSession;
+        setViewMode(shouldShowResults ? "results" : "dashboard");
+        setCurrentStep(shouldShowResults ? 2 : initialStep);
+        setMaxStepReached(Math.max(maxStep, shouldShowResults ? 2 : 1));
       })
       .catch(() => setLeads([]))
       .finally(() => setIsLoadingSession(false));
-  }, [activeSessionId]);
+  }, [activeSessionId, searchingSessionId]);
 
   const handleSearch = async (params: SearchParams) => {
     setSearchError(null);
@@ -471,20 +474,43 @@ export default function Index() {
     setIsSavingAndCheckDuplicate(true);
     setSelectedLeads(new Set());
     try {
+      // 1) Move selected leads into the CRM Check stage
       const res = await api.leads.moveToCrmCheck(ids);
       toast({
         title: "Moved to CRM Check",
         description: `${res.moved} moved${res.skipped > 0 ? `, ${res.skipped} skipped` : ""}${res.failed > 0 ? `, ${res.failed} failed` : ""}.`,
       });
+
+      // 2) Navigate to CRM Check view
       setViewMode("crm-check");
       setCurrentStep(3);
       setMaxStepReached((prev) => Math.max(prev, 3));
+
+      // 3) Load CRM Check leads for this session
       await fetchCrmCheckLeads();
+
+      // 4) Run bulk duplicate check for these moved leads
+      await runBulkCrmCheck(ids);
+
+      // 5) Auto-save checked leads to CRM (same rules as "Save to CRM" in CRM Check view)
+      const saveableIds = crmCheckLeads
+        .filter(
+          (l) =>
+            ids.includes(l.id) &&
+            (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") &&
+            l.isNew !== false
+        )
+        .map((l) => l.id);
+
+      if (saveableIds.length > 0) {
+        await handleCrmCheckSaveToCrm(saveableIds);
+      }
+
       fetchSessions();
     } catch (err) {
       toast({
         title: "Failed",
-        description: err instanceof Error ? err.message : "Could not move to CRM Check",
+        description: err instanceof Error ? err.message : "Could not move to CRM Check and run checks",
         variant: "destructive",
       });
     } finally {
@@ -893,7 +919,7 @@ export default function Index() {
                 onViewLead={setActiveLead}
                 searchMeta={searchMeta}
                 sessionCrmStats={sessionCrmStats}
-                isSearching={isSearching && (!!searchingSessionId && activeSessionId === searchingSessionId)}
+                isSearching={isSearching && (!searchingSessionId || activeSessionId === searchingSessionId)}
                 isLoadingSession={isLoadingSession}
                 searchError={searchError}
                 onSaveToCrm={handleSaveToCrm}
@@ -937,7 +963,7 @@ export default function Index() {
   );
 }
 
-type CrmCheckFilter = "all" | "to-save" | "saved" | "duplicate" | "similar";
+type CrmCheckFilter = "all" | "saved" | "duplicate" | "similar";
 
 /* ─── CRM Duplicate Check View ─── */
 function CrmCheckView({
@@ -990,9 +1016,6 @@ function CrmCheckView({
   const similarCount = leads.filter(
     (l) => (l.similarMatches?.length ?? 0) > 0 && !l.duplicateOf
   ).length;
-  const toSaveCount = leads.filter(
-    (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR"
-  ).length;
   const saveableLeads = leads.filter(
     (l) => (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && l.isNew !== false && !savingIds.has(l.id)
   );
@@ -1000,10 +1023,6 @@ function CrmCheckView({
 
   const filteredLeads = (() => {
     switch (filter) {
-      case "to-save":
-        return leads.filter(
-          (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR"
-        );
       case "saved":
         return leads.filter((l) => l.isNew === false);
       case "duplicate":
@@ -1077,24 +1096,12 @@ function CrmCheckView({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => onRunCheckForSelected()}
-              disabled={isCrmCheckLoading}
-              className="gap-2"
-            >
-              {isChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-              Check Duplicate for Selected ({selectedLeads.size})
-            </Button>
-          )}
-          {selectedLeads.size > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
               onClick={() => onRemoveLeads(Array.from(selectedLeads))}
               disabled={isCrmCheckLoading}
               className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
             >
               {isRemoving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-              Remove Selected ({selectedLeads.size})
+              Delete Lead ({selectedLeads.size})
             </Button>
           )}
         </div>
@@ -1154,7 +1161,6 @@ function CrmCheckView({
         {(
           [
             { id: "all" as const, label: "All", count: leads.length },
-            { id: "to-save" as const, label: "To Save", count: toSaveCount },
             { id: "saved" as const, label: "Saved", count: savedCount },
             { id: "duplicate" as const, label: "Duplicate", count: duplicateCount },
             { id: "similar" as const, label: "Found Similar", count: similarCount },
@@ -1190,13 +1196,11 @@ function CrmCheckView({
               {filter === "all"
                 ? "No leads"
                 : `No leads match "${
-                    filter === "to-save"
-                      ? "To Save"
-                      : filter === "saved"
-                        ? "Saved"
-                        : filter === "duplicate"
-                          ? "Duplicate"
-                          : "Found Similar"
+                    filter === "saved"
+                      ? "Saved"
+                      : filter === "duplicate"
+                        ? "Duplicate"
+                        : "Found Similar"
                   }" filter`}
             </p>
             {filter !== "all" && (
@@ -1210,15 +1214,34 @@ function CrmCheckView({
             )}
           </div>
         ) : (
-          filteredLeads.map((lead) => (
-            <ClickableLeadCard
-              key={lead.id}
-              lead={lead}
-              selected={selectedLeads.has(lead.id)}
-              onToggle={onToggle}
-              onView={onViewLead}
-            />
-          ))
+          filteredLeads.map((lead) => {
+            const wasChecked = !!(lead.checkedAt || lead.crmCheckedAt);
+            const hasSimilar = wasChecked && (lead.similarMatches?.length ?? 0) > 0 && !lead.duplicateOf;
+            const isDuplicate = !!lead.duplicateOf || lead.crmStatus === "DUPLICATE";
+            const passedCheck =
+              wasChecked && (lead.crmStatus === "NEW" || lead.crmStatus === "FOUND_SIMILAR") && !lead.duplicateOf;
+
+            // Card accent color: green (OK), yellow (similar), red (duplicate)
+            let crmColorClass = "";
+            if (isDuplicate) {
+              crmColorClass = "border-l-4 border-l-rose-500/80";
+            } else if (hasSimilar) {
+              crmColorClass = "border-l-4 border-l-amber-500/80";
+            } else if (passedCheck) {
+              crmColorClass = "border-l-4 border-l-emerald-500/80";
+            }
+
+            return (
+              <ClickableLeadCard
+                key={lead.id}
+                lead={lead}
+                selected={selectedLeads.has(lead.id)}
+                onToggle={onToggle}
+                onView={onViewLead}
+                companyColor={crmColorClass}
+              />
+            );
+          })
         )}
 
       {/* Duplicate / Similar leads popup */}
@@ -1305,13 +1328,13 @@ function CrmCheckView({
         </DialogContent>
       </Dialog>
 
-      {/* Sticky save bar when selected (like Create List) */}
+      {/* Sticky bar when selected (CRM check actions) */}
       {selectedLeads.size > 0 && (
-        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up z-20">
+        <div className="col-span-2 xl:col-span-3 sticky bottom-4 mt-6 w-full flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up z-20">
           <p className="text-sm font-medium text-foreground">
             <span className="text-primary font-bold">{selectedLeads.size}</span> selected
           </p>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -1320,37 +1343,8 @@ function CrmCheckView({
             >
               Clear
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={onRunCheckForSelected}
-              className="gap-2"
-            >
-              <Search className="w-3.5 h-3.5" />
-              Check Duplicate for Selected
-            </Button>
             {(() => {
-              const selectedSaveable = leads.filter(
-                (l) => selectedLeads.has(l.id) && (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && l.isNew !== false && !savingIds.has(l.id)
-              );
-              return selectedSaveable.length > 0 ? (
-                <Button
-                  size="sm"
-                  onClick={() => onSaveToCrm(selectedSaveable.map((l) => l.id))}
-                  className="gap-2"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Save {selectedSaveable.length} to CRM
-                </Button>
-              ) : null;
-            })()}
-            {(() => {
-              const selectedEligible = leads.filter((l) => {
-                if (!selectedLeads.has(l.id)) return false;
-                const wasChecked = !!(l.checkedAt || l.crmCheckedAt);
-                const passedCheck = (l.crmStatus === "NEW" || l.crmStatus === "FOUND_SIMILAR") && !l.duplicateOf;
-                return wasChecked && passedCheck;
-              });
+              const selectedEligible = leads.filter((l) => selectedLeads.has(l.id));
               return selectedEligible.length > 0 ? (
                 <Button
                   size="sm"
@@ -1358,7 +1352,7 @@ function CrmCheckView({
                   className="gap-2 bg-primary"
                 >
                   <ChevronRight className="w-3.5 h-3.5" />
-                  Move {selectedEligible.length} to Enrichment
+                  Move to Enrichment
                 </Button>
               ) : null;
             })()}
@@ -1605,9 +1599,18 @@ function EnrichmentView({
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           {selectedLeads.size > 0 && (
-            <span className="text-xs text-muted-foreground">{selectedLeads.size} selected</span>
+            <>
+              <span className="text-xs text-muted-foreground">{selectedLeads.size} selected</span>
+              <button
+                type="button"
+                onClick={onClearSelection}
+                className="text-xs text-destructive hover:underline font-semibold"
+              >
+                Deselect All
+              </button>
+            </>
           )}
           <button
             type="button"
@@ -1655,7 +1658,7 @@ function EnrichmentView({
               className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
             >
               {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Remove Selected
+              Delete Selected
             </Button>
             {(() => {
               const selectedNew = leads.filter(

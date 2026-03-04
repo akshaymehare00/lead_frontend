@@ -8,7 +8,8 @@ import { cn } from "@/lib/utils";
 export type SearchParams =
   | { mode: "natural"; query: string; maxLead: number }
   | { mode: "manual"; location: string; categories: string[]; maxLead: number }
-  | { mode: "current_location"; latitude: number; longitude: number; radiusKm: number; maxLead: number };
+  | { mode: "current_location"; latitude: number; longitude: number; radiusKm: number; maxLead: number }
+  | { mode: "apify"; location: string; searchStrings?: string[]; maxLead: number };
 
 const CATEGORIES = [
   "Chain Store",
@@ -69,7 +70,10 @@ interface SearchPanelProps {
   compact?: boolean;
 }
 
+export type SearchSource = "serpapi" | "apify";
+
 export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps) => {
+  const [searchSource, setSearchSource] = useState<SearchSource>("serpapi");
   const [location, setLocation] = useState("");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [leadCount, setLeadCount] = useState(10);
@@ -113,11 +117,23 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   }, []);
 
   const handleSearch = () => {
-    if (!location.trim() || selectedCategories.length === 0) return;
-    onSearch({ mode: "manual", location, categories: selectedCategories, maxLead: leadCount });
+    if (!location.trim()) return;
+    if (searchSource === "serpapi") {
+      if (selectedCategories.length === 0) return;
+      onSearch({ mode: "manual", location, categories: selectedCategories, maxLead: leadCount });
+    } else {
+      onSearch({
+        mode: "apify",
+        location,
+        searchStrings: selectedCategories.length > 0 ? selectedCategories : undefined,
+        maxLead: leadCount,
+      });
+    }
   };
 
-  const canSearch = location.trim().length > 0 && selectedCategories.length > 0;
+  const canSearch =
+    location.trim().length > 0 &&
+    (searchSource === "apify" || selectedCategories.length > 0);
 
   return (
     <div className={compact ? "space-y-4" : "p-6 space-y-5"}>
@@ -127,6 +143,40 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
           <span className="text-sm font-semibold text-foreground">Search Parameters</span>
         </div>
       )}
+
+      {/* Search Source: SerpAPI vs Apify */}
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+          Search Source
+        </label>
+        <div className="flex gap-4">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="searchSource"
+              checked={searchSource === "serpapi"}
+              onChange={() => setSearchSource("serpapi")}
+              className="w-4 h-4 text-primary border-border focus:ring-primary"
+            />
+            <span className="text-sm font-medium">SerpAPI</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="searchSource"
+              checked={searchSource === "apify"}
+              onChange={() => setSearchSource("apify")}
+              className="w-4 h-4 text-primary border-border focus:ring-primary"
+            />
+            <span className="text-sm font-medium">Apify</span>
+          </label>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          {searchSource === "serpapi"
+            ? "AI-filtered results with ranking"
+            : "Raw Google Maps results (no AI filter). Leave empty for default terms."}
+        </p>
+      </div>
 
       {/* Location */}
       <div className="space-y-1.5">
@@ -159,10 +209,10 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
         />
       </div>
 
-      {/* Business Category */}
+      {/* Business Category / Search Terms */}
       <div className="space-y-2">
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-          Business Category
+          {searchSource === "apify" ? "Search Terms (optional)" : "Business Category"}
         </label>
         <div className="grid grid-cols-2 gap-2">
           {CATEGORIES.map((cat) => {

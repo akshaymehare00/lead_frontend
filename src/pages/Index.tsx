@@ -136,12 +136,14 @@ export default function Index() {
             ? { mode: "natural", query: session.title, maxLead: session.leadCount }
             : session.mode === "CURRENT_LOCATION"
               ? { mode: "current_location", latitude: 0, longitude: 0, radiusKm: 25, maxLead: session.leadCount }
-              : {
-                  mode: "manual",
-                  location: session.location ?? "",
-                  categories: session.categories,
-                  maxLead: session.leadCount,
-                }
+              : session.mode === "APIFY"
+                ? { mode: "apify", location: session.location ?? "", searchStrings: session.categories, maxLead: session.leadCount }
+                : {
+                    mode: "manual",
+                    location: session.location ?? "",
+                    categories: session.categories,
+                    maxLead: session.leadCount,
+                  }
         );
 
         // Derive which workflow steps should be unlocked from backend stages
@@ -182,10 +184,17 @@ export default function Index() {
     setViewMode("results");
 
     try {
-      const { searchSessionId } = await api.search.start({
-        ...params,
-        maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
-      });
+      const isApify = params.mode === "apify";
+      const { searchSessionId } = isApify
+        ? await api.search.apify({
+            location: params.location,
+            searchStrings: params.searchStrings,
+            maxLead: params.maxLead ?? 20,
+          })
+        : await api.search.start({
+            ...params,
+            maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
+          });
 
       // Track which session is currently searching
       setSearchingSessionId(searchSessionId);
@@ -193,8 +202,11 @@ export default function Index() {
       setActiveSessionId(searchSessionId);
 
       // Optimistically add this search to sidebar history immediately
-      const sessionTitle =
-        params.mode === "natural"
+      const sessionTitle = isApify
+        ? (params.searchStrings?.length
+            ? `Apify: ${params.searchStrings.join(", ")} in ${params.location}`
+            : `Apify: ${params.location}`)
+        : params.mode === "natural"
           ? params.query
           : params.mode === "manual"
             ? `${params.categories.join(", ")} in ${params.location}`
@@ -225,7 +237,8 @@ export default function Index() {
         } else if (status.status === "FAILED") {
           setIsSearching(false);
           setSearchingSessionId(null);
-          setSearchError("Search failed");
+          const errMsg = (status as { errorMessage?: string }).errorMessage;
+          setSearchError(errMsg || "Search failed");
         } else {
           setTimeout(poll, POLL_INTERVAL);
         }
@@ -2067,7 +2080,9 @@ function ResultsView({
               ? searchMeta.query
               : searchMeta?.mode === "current_location"
                 ? "Searching near your current location..."
-                : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
+                : searchMeta?.mode === "apify"
+                  ? `Searching via Apify... ${searchMeta.searchStrings?.length ? searchMeta.searchStrings.join(", ") + " in " : ""}${searchMeta.location}`
+                  : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
           </p>
         </div>
       </div>
@@ -2110,6 +2125,17 @@ function ResultsView({
           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
             <MapPin className="w-3 h-3 text-primary" />Near Me &middot; {searchMeta.radiusKm} km radius
           </span>
+        ) : searchMeta?.mode === "apify" ? (
+          <>
+            {(searchMeta.searchStrings ?? []).map((c) => (
+              <span key={c} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+                <Search className="w-3 h-3 text-primary" />{c}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+              <MapPin className="w-3 h-3 text-primary" />{searchMeta.location}
+            </span>
+          </>
         ) : (
           <>
             {(searchMeta?.mode === "manual" ? searchMeta.categories : []).map((c) => (

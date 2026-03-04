@@ -109,7 +109,14 @@ export interface SearchParamsCurrentLocation {
   maxLead?: number;
 }
 
-export type SearchParams = SearchParamsNatural | SearchParamsManual | SearchParamsCurrentLocation;
+export interface SearchParamsApify {
+  mode: "apify";
+  location: string;
+  searchStrings?: string[];
+  maxLead?: number;
+}
+
+export type SearchParams = SearchParamsNatural | SearchParamsManual | SearchParamsCurrentLocation | SearchParamsApify;
 
 export interface PlaceSuggestion {
   id: string;
@@ -173,6 +180,7 @@ export interface SearchStatusResponse {
   status: "PENDING" | "COMPLETED" | "FAILED";
   leadCount: number;
   leads?: LeadResponse[];
+  errorMessage?: string;
 }
 
 export interface SessionListItem {
@@ -406,6 +414,12 @@ export const api = {
   search: {
     start: (params: SearchParams) =>
       request<SearchStartResponse>("/api/v1/search", {
+        method: "POST",
+        body: JSON.stringify(params),
+      }),
+    /** Apify Google Maps Scraper — raw results, no AI filter */
+    apify: (params: { location: string; searchStrings?: string[]; maxLead?: number }) =>
+      request<SearchStartResponse>("/api/v1/search/apify", {
         method: "POST",
         body: JSON.stringify(params),
       }),

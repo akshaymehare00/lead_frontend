@@ -12,7 +12,6 @@ export type SearchParams =
   | { mode: "apify"; location: string; searchStrings?: string[]; maxLead: number };
 
 const CATEGORIES = [
-  "Chain Store",
   "Polished Dealers",
   "Diamond Manufacturers",
   "E-Commerce",

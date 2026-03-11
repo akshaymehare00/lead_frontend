@@ -9,7 +9,8 @@ export type SearchParams =
   | { mode: "natural"; query: string; maxLead: number }
   | { mode: "manual"; location: string; categories: string[]; maxLead: number }
   | { mode: "current_location"; latitude: number; longitude: number; radiusKm: number; maxLead: number }
-  | { mode: "apify"; location: string; searchStrings?: string[]; maxLead: number };
+  | { mode: "apify"; location: string; searchStrings?: string[]; maxLead: number }
+  | { mode: "apify_url"; googleMapsUrl: string; maxLead: number };
 
 const CATEGORIES = [
   "Polished Dealers",
@@ -20,6 +21,7 @@ const CATEGORIES = [
 ];
 
 const LEAD_COUNTS = [10, 20, 30, 50, 100];
+const LEAD_COUNTS_URL = [10, 20, 30, 50, 100, 120];
 
 function getBestPosition(targetAccuracy = 100, maxWaitMs = 15_000): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
@@ -69,11 +71,12 @@ interface SearchPanelProps {
   compact?: boolean;
 }
 
-export type SearchSource = "serpapi" | "apify";
+export type SearchSource = "serpapi" | "apify" | "url";
 
 export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps) => {
   const [searchSource, setSearchSource] = useState<SearchSource>("serpapi");
   const [location, setLocation] = useState("");
+  const [googleMapsUrl, setGoogleMapsUrl] = useState("");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [leadCount, setLeadCount] = useState(10);
   const [countOpen, setCountOpen] = useState(false);
@@ -116,6 +119,11 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   }, []);
 
   const handleSearch = () => {
+    if (searchSource === "url") {
+      if (!googleMapsUrl.trim() || !googleMapsUrl.includes("google.com/maps/")) return;
+      onSearch({ mode: "apify_url", googleMapsUrl: googleMapsUrl.trim(), maxLead: leadCount });
+      return;
+    }
     if (!location.trim()) return;
     if (searchSource === "serpapi") {
       if (selectedCategories.length === 0) return;
@@ -131,8 +139,10 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   };
 
   const canSearch =
-    location.trim().length > 0 &&
-    (searchSource === "apify" || selectedCategories.length > 0);
+    searchSource === "url"
+      ? googleMapsUrl.trim().length > 0 && googleMapsUrl.includes("google.com/maps/")
+      : location.trim().length > 0 &&
+        (searchSource === "apify" || selectedCategories.length > 0);
 
   return (
     <div className={compact ? "space-y-4" : "p-6 space-y-5"}>
@@ -143,12 +153,12 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
         </div>
       )}
 
-      {/* Search Source: SerpAPI vs Apify */}
+      {/* Search Source: SerpAPI, Apify, URL Search */}
       <div className="space-y-2">
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           Search Source
         </label>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="radio"
@@ -169,15 +179,48 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
             />
             <span className="text-sm font-medium">Apify</span>
           </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="searchSource"
+              checked={searchSource === "url"}
+              onChange={() => setSearchSource("url")}
+              className="w-4 h-4 text-primary border-border focus:ring-primary"
+            />
+            <span className="text-sm font-medium">URL Search</span>
+          </label>
         </div>
         <p className="text-[11px] text-muted-foreground">
           {searchSource === "serpapi"
             ? "AI-filtered results with ranking"
-            : "Raw Google Maps results (no AI filter). Leave empty for default terms."}
+            : searchSource === "apify"
+              ? "Raw Google Maps results (no AI filter). Leave empty for default terms."
+              : "Paste a Google Maps search URL to scrape leads directly."}
         </p>
       </div>
 
-      {/* Location */}
+      {/* URL Search — only when URL Search selected */}
+      {searchSource === "url" && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            Google Maps URL
+          </label>
+          <input
+            type="url"
+            value={googleMapsUrl}
+            onChange={(e) => setGoogleMapsUrl(e.target.value)}
+            placeholder="https://www.google.com/maps/search/diamond+store+in+bangalore/..."
+            disabled={isSearching}
+            className="w-full px-4 py-2.5 rounded-lg border border-border bg-secondary/50 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            Must contain google.com/maps/
+          </p>
+        </div>
+      )}
+
+      {/* Location — hidden when URL Search */}
+      {searchSource !== "url" && (
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Location</label>
@@ -207,8 +250,10 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
           disabled={isSearching}
         />
       </div>
+      )}
 
-      {/* Business Category / Search Terms */}
+      {/* Business Category / Search Terms — hidden when URL Search */}
+      {searchSource !== "url" && (
       <div className="space-y-2">
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           {searchSource === "apify" ? "Search Terms (optional)" : "Business Category"}
@@ -233,6 +278,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
           })}
         </div>
       </div>
+      )}
 
       {/* Max Lead Count */}
       <div className="space-y-1.5">
@@ -249,7 +295,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
           </button>
           {countOpen && (
             <div className="absolute top-full mt-1 w-full bg-card border border-border rounded-lg shadow-lg z-10 overflow-hidden animate-slide-up">
-              {LEAD_COUNTS.map((c) => (
+              {(searchSource === "url" ? LEAD_COUNTS_URL : LEAD_COUNTS).map((c) => (
                 <button
                   key={c}
                   onClick={() => { setLeadCount(c); setCountOpen(false); }}

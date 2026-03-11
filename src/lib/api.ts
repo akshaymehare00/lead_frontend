@@ -116,7 +116,13 @@ export interface SearchParamsApify {
   maxLead?: number;
 }
 
-export type SearchParams = SearchParamsNatural | SearchParamsManual | SearchParamsCurrentLocation | SearchParamsApify;
+export interface SearchParamsApifyUrl {
+  mode: "apify_url";
+  googleMapsUrl: string;
+  maxLead?: number;
+}
+
+export type SearchParams = SearchParamsNatural | SearchParamsManual | SearchParamsCurrentLocation | SearchParamsApify | SearchParamsApifyUrl;
 
 export interface PlaceSuggestion {
   id: string;
@@ -420,6 +426,12 @@ export const api = {
     /** Apify Google Maps Scraper — raw results, no AI filter */
     apify: (params: { location: string; searchStrings?: string[]; maxLead?: number }) =>
       request<SearchStartResponse>("/api/v1/search/apify", {
+        method: "POST",
+        body: JSON.stringify(params),
+      }),
+    /** Apify URL Search — scrape leads from a Google Maps URL */
+    apifyUrl: (params: { googleMapsUrl: string; maxLead?: number }) =>
+      request<SearchStartResponse>("/api/v1/search/apify/url", {
         method: "POST",
         body: JSON.stringify(params),
       }),

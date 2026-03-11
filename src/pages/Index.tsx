@@ -138,7 +138,9 @@ export default function Index() {
               ? { mode: "current_location", latitude: 0, longitude: 0, radiusKm: 25, maxLead: session.leadCount }
               : session.mode === "APIFY"
                 ? { mode: "apify", location: session.location ?? "", searchStrings: session.categories, maxLead: session.leadCount }
-                : {
+                : session.mode === "APIFY_URL"
+                  ? { mode: "apify_url", googleMapsUrl: (session as { googleMapsUrl?: string }).googleMapsUrl ?? "", maxLead: session.leadCount }
+                  : {
                     mode: "manual",
                     location: session.location ?? "",
                     categories: session.categories,
@@ -185,16 +187,22 @@ export default function Index() {
 
     try {
       const isApify = params.mode === "apify";
-      const { searchSessionId } = isApify
-        ? await api.search.apify({
-            location: params.location,
-            searchStrings: params.searchStrings,
+      const isApifyUrl = params.mode === "apify_url";
+      const { searchSessionId } = isApifyUrl
+        ? await api.search.apifyUrl({
+            googleMapsUrl: params.googleMapsUrl,
             maxLead: params.maxLead ?? 20,
           })
-        : await api.search.start({
-            ...params,
-            maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
-          });
+        : isApify
+          ? await api.search.apify({
+              location: params.location,
+              searchStrings: params.searchStrings,
+              maxLead: params.maxLead ?? 20,
+            })
+          : await api.search.start({
+              ...params,
+              maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
+            });
 
       // Track which session is currently searching
       setSearchingSessionId(searchSessionId);
@@ -202,15 +210,17 @@ export default function Index() {
       setActiveSessionId(searchSessionId);
 
       // Optimistically add this search to sidebar history immediately
-      const sessionTitle = isApify
-        ? (params.searchStrings?.length
-            ? `Apify: ${params.searchStrings.join(", ")} in ${params.location}`
-            : `Apify: ${params.location}`)
-        : params.mode === "natural"
-          ? params.query
-          : params.mode === "manual"
-            ? `${params.categories.join(", ")} in ${params.location}`
-            : `Nearby search (${params.radiusKm ?? 25} km)`;
+      const sessionTitle = isApifyUrl
+        ? "URL Search"
+        : isApify
+          ? (params.searchStrings?.length
+              ? `Apify: ${params.searchStrings.join(", ")} in ${params.location}`
+              : `Apify: ${params.location}`)
+          : params.mode === "natural"
+            ? params.query
+            : params.mode === "manual"
+              ? `${params.categories.join(", ")} in ${params.location}`
+              : `Nearby search (${params.radiusKm ?? 25} km)`;
 
       setSessions((prev) => {
         const withoutDuplicate = prev.filter((s) => s.id !== searchSessionId);
@@ -2082,7 +2092,9 @@ function ResultsView({
                 ? "Searching near your current location..."
                 : searchMeta?.mode === "apify"
                   ? `Searching via Apify... ${searchMeta.searchStrings?.length ? searchMeta.searchStrings.join(", ") + " in " : ""}${searchMeta.location}`
-                  : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
+                  : searchMeta?.mode === "apify_url"
+                    ? "Searching via URL..."
+                    : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
           </p>
         </div>
       </div>
@@ -2136,6 +2148,10 @@ function ResultsView({
               <MapPin className="w-3 h-3 text-primary" />{searchMeta.location}
             </span>
           </>
+        ) : searchMeta?.mode === "apify_url" ? (
+          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+            <Search className="w-3 h-3 text-primary" />URL Search
+          </span>
         ) : (
           <>
             {(searchMeta?.mode === "manual" ? searchMeta.categories : []).map((c) => (

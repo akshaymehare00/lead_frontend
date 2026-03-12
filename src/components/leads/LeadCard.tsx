@@ -218,7 +218,7 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
           <div className="flex items-center gap-2 min-w-0">
             <Globe className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
             <a
-              href={`https://${lead.website}`}
+              href={lead.website.startsWith("http") ? lead.website : `https://${lead.website}`}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => e.stopPropagation()}

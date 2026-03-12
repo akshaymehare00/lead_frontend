@@ -1464,7 +1464,7 @@ function CrmCheckView({
                     {duplicateSimilarLead.address && <p>{duplicateSimilarLead.address}</p>}
                     {duplicateSimilarLead.phone && <p>{duplicateSimilarLead.phone}</p>}
                     {duplicateSimilarLead.website && (
-                      <a href={`https://${duplicateSimilarLead.website}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                      <a href={(duplicateSimilarLead.website ?? "").startsWith("http") ? duplicateSimilarLead.website! : `https://${duplicateSimilarLead.website}`} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
                         {duplicateSimilarLead.website}
                       </a>
                     )}

@@ -306,8 +306,12 @@ export default function Index() {
     });
   };
 
-  const selectAllNew = () => {
-    setSelectedLeads(new Set(leads.filter((l) => l.isNew).map((l) => l.id)));
+  const selectAllNew = (leadIds?: string[]) => {
+    if (leadIds) {
+      setSelectedLeads(new Set(leadIds));
+    } else {
+      setSelectedLeads(new Set(leads.filter((l) => l.isNew !== false).map((l) => l.id)));
+    }
   };
 
   const handleNew = () => {
@@ -2158,7 +2162,7 @@ function ResultsView({
   leads: Lead[];
   selectedLeads: Set<string>;
   onToggle: (id: string) => void;
-  onSelectAllNew: () => void;
+  onSelectAllNew: (leadIds?: string[]) => void;
   onViewLead: (lead: Lead) => void;
   searchMeta: SearchParams | null;
   sessionCrmStats: { savedCount?: number; duplicateCount?: number };
@@ -2375,8 +2379,12 @@ function ResultsView({
               </button>
             </>
           )}
-          <button onClick={onSelectAllNew} className="text-xs text-primary hover:underline font-semibold">
-            Select All New
+          <button
+            type="button"
+            onClick={() => onSelectAllNew(displayedLeads.map((l) => l.id))}
+            className="text-xs text-primary hover:underline font-semibold"
+          >
+            Select All
           </button>
         </div>
       </div>

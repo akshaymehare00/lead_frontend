@@ -5,7 +5,7 @@ const STEPS = [
   { id: 1, title: "Home" },
   { id: 2, title: "Create List" },
   { id: 3, title: "CRM Check" },
-  { id: 4, title: "Enrichment List" },
+  { id: 4, title: "Enrich List" },
   { id: 5, title: "Final List" },
 ];
 

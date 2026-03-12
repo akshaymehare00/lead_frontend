@@ -80,7 +80,6 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   const [location, setLocation] = useState("");
   const [googleMapsUrl, setGoogleMapsUrl] = useState("");
   const [csvFile, setCsvFile] = useState<File | null>(null);
-  const [csvTitle, setCsvTitle] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -127,7 +126,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   const handleSearch = () => {
     if (searchSource === "csv") {
       if (!csvFile) return;
-      onSearch({ mode: "csv_import", file: csvFile, maxLead: leadCount, title: csvTitle.trim() || undefined });
+      onSearch({ mode: "csv_import", file: csvFile, maxLead: leadCount });
       return;
     }
     if (searchSource === "url") {
@@ -284,19 +283,6 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
                 <span className="text-[11px] text-muted-foreground/80">CSV files only</span>
               </>
             )}
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Session Title (optional)
-            </label>
-            <input
-              type="text"
-              value={csvTitle}
-              onChange={(e) => setCsvTitle(e.target.value)}
-              placeholder="e.g. Diamond Bourse Mumbai"
-              disabled={isSearching}
-              className="w-full px-4 py-2.5 rounded-lg border border-border bg-secondary/50 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-            />
           </div>
         </div>
       )}

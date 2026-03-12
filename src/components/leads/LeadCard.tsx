@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Star, Phone, Globe, MapPin, CheckSquare, Square, ExternalLink, CheckCircle2, Store } from "lucide-react";
+import { Star, Phone, Globe, MapPin, Map, CheckSquare, Square, ExternalLink, CheckCircle2, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -82,6 +82,8 @@ export interface Lead {
   currentStep?: number;
   /** When Apify enrichment details were fetched. null/undefined = not yet fetched */
   apifyEnrichmentFetchedAt?: string | null;
+  /** Google Maps URL for the place */
+  mapUrl?: string;
 }
 
 interface LeadCardProps {
@@ -225,6 +227,21 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
               className="text-xs text-primary hover:underline flex items-center gap-1 truncate min-w-0"
             >
               <span className="truncate">{lead.website}</span>
+              <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
+            </a>
+          </div>
+        )}
+        {lead.mapUrl && (
+          <div className="flex items-center gap-2 min-w-0">
+            <Map className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
+            <a
+              href={lead.mapUrl.startsWith("http") ? lead.mapUrl : `https://${lead.mapUrl}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="text-xs text-primary hover:underline flex items-center gap-1"
+            >
+              View on Maps
               <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
             </a>
           </div>

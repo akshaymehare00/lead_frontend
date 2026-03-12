@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  X, Star, Phone, Globe, MapPin, Clock,
+  X, Star, Phone, Globe, MapPin, Map as MapIcon, Clock,
   CheckCircle2, User, Building2, Mail, Trash2
 } from "lucide-react";
 import { Lead } from "./LeadCard";
@@ -31,6 +31,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
     linkedin?: string | null;
     instagram?: string | null;
     website?: string | null;
+    mapUrl?: string | null;
     contactPerson?: string | null;
     designation?: string | null;
     crmStatus?: string;
@@ -47,6 +48,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
           linkedin: l.linkedin,
           instagram: l.instagram,
           website: l.website,
+          mapUrl: l.MapUrl ?? undefined,
           contactPerson: l.contactPerson,
           designation: l.designation,
           crmStatus: l.crmStatus,
@@ -143,8 +145,15 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
         </div>
 
         {/* Social links - separate buttons at bottom */}
-        {(fullLead?.website || lead.website || fullLead?.linkedin || lead.linkedin || fullLead?.instagram || lead.instagram) && (
+        {(fullLead?.website || lead.website || fullLead?.linkedin || lead.linkedin || fullLead?.instagram || lead.instagram || fullLead?.mapUrl || lead.mapUrl) && (
           <div className="p-4 border-t border-border bg-surface-1 flex flex-wrap gap-2">
+            {(fullLead?.mapUrl || lead.mapUrl) && (
+              <SocialButton
+                href={((fullLead?.mapUrl ?? lead.mapUrl) ?? "").startsWith("http") ? (fullLead?.mapUrl ?? lead.mapUrl)! : `https://${fullLead?.mapUrl ?? lead.mapUrl}`}
+                icon={MapIcon}
+                label="View on Maps"
+              />
+            )}
             {(fullLead?.website || lead.website) && (
               <SocialButton
                 href={(fullLead?.website ?? lead.website)!.startsWith("http") ? (fullLead?.website ?? lead.website)! : `https://${fullLead?.website ?? lead.website}`}

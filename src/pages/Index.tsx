@@ -1163,6 +1163,22 @@ export default function Index() {
   );
 }
 
+/** Normalize category for filter: Jeweler + Jewelery Store + Jewelry Store → Jewellery */
+function normalizeCategoryForFilter(category: string): string {
+  const c = (category ?? "").toLowerCase().trim();
+  if (["jeweler", "jewelery store", "jewelry store", "jewellery store"].includes(c)) {
+    return "Jewellery";
+  }
+  return category?.trim() || "";
+}
+
+/** Check if lead matches category filter (Jewelery Store matches Jeweler + Jewelery Store) */
+function matchesCategoryFilter(lead: Lead, filterLabel: string): boolean {
+  const leadNorm = normalizeCategoryForFilter(lead.category ?? "");
+  const filterNorm = normalizeCategoryForFilter(filterLabel);
+  return leadNorm === filterNorm;
+}
+
 /** Check if lead is Lab Grown Diamond (store name or category) */
 function isLabGrownDiamond(lead: { name?: string; category?: string }): boolean {
   const name = (lead.name ?? "").toLowerCase();
@@ -2157,10 +2173,23 @@ function ResultsView({
   isRemoving?: boolean;
   onClearSelection: () => void;
 }) {
-  const [labGrownFilter, setLabGrownFilter] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+
+  const categoryFilterOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const l of leads) {
+      const norm = normalizeCategoryForFilter(l.category ?? "");
+      if (norm) seen.add(norm);
+    }
+    return Array.from(seen).sort((a, b) => a.localeCompare(b));
+  }, [leads]);
+
   const displayedLeads = useMemo(
-    () => (labGrownFilter ? leads.filter(isLabGrownDiamond) : leads),
-    [leads, labGrownFilter]
+    () =>
+      categoryFilter
+        ? leads.filter((l) => matchesCategoryFilter(l, categoryFilter))
+        : leads,
+    [leads, categoryFilter]
   );
 
   // Group leads by name (same company, different locations) — accent colors + sibling list
@@ -2287,21 +2316,46 @@ function ResultsView({
           </>
         )}
         <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary font-semibold">
-          <Shield className="w-3 h-3" />{labGrownFilter ? `${displayedLeads.length} of ${leads.length}` : leads.length} leads found
+          <Shield className="w-3 h-3" />{categoryFilter ? `${displayedLeads.length} of ${leads.length}` : leads.length} leads found
         </span>
+        <span className="w-px h-5 bg-border" />
+        <span className="text-xs text-muted-foreground font-medium">Filter:</span>
         <button
           type="button"
-          onClick={() => setLabGrownFilter((v) => !v)}
+          onClick={() => setCategoryFilter(null)}
           className={cn(
             "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border",
-            labGrownFilter
+            !categoryFilter
               ? "bg-primary/15 border-primary/30 text-primary"
               : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
           )}
         >
-          <Search className="w-3 h-3" />
-          Lab Grown ({leads.filter(isLabGrownDiamond).length})
+          All
+          <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", !categoryFilter ? "bg-primary/20" : "bg-muted")}>
+            {leads.length}
+          </span>
         </button>
+        {categoryFilterOptions.map((label) => {
+          const count = leads.filter((l) => matchesCategoryFilter(l, label)).length;
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setCategoryFilter(label)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border",
+                categoryFilter === label
+                  ? "bg-primary/15 border-primary/30 text-primary"
+                  : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
+              )}
+            >
+              {label}
+              <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", categoryFilter === label ? "bg-primary/20" : "bg-muted")}>
+                {count}
+              </span>
+            </button>
+          );
+        })}
         {typeof sessionCrmStats?.savedCount === "number" && sessionCrmStats.savedCount > 0 && (
           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-success/10 border border-success/30 text-xs text-success font-medium">
             {sessionCrmStats.savedCount} saved to CRM
@@ -2331,19 +2385,17 @@ function ResultsView({
       <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
         {displayedLeads.length === 0 ? (
           <div className="col-span-2 xl:col-span-3 py-12 text-center rounded-xl border border-dashed border-border bg-muted/30">
-            {labGrownFilter ? (
-              <>
-                <p className="text-sm text-muted-foreground">No Lab Grown Diamond leads found</p>
-                <button
-                  type="button"
-                  onClick={() => setLabGrownFilter(false)}
-                  className="mt-2 text-xs text-primary hover:underline"
-                >
-                  Show all leads
-                </button>
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">No leads</p>
+            <p className="text-sm text-muted-foreground">
+              {categoryFilter ? `No leads match "${categoryFilter}"` : "No leads"}
+            </p>
+            {categoryFilter && (
+              <button
+                type="button"
+                onClick={() => setCategoryFilter(null)}
+                className="mt-2 text-xs text-primary hover:underline"
+              >
+                Show all leads
+              </button>
             )}
           </div>
         ) : (

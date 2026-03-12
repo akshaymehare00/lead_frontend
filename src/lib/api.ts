@@ -197,6 +197,8 @@ export interface LeadResponse {
   isNew?: boolean;
   /** When Apify enrichment details were fetched. null = not yet fetched */
   apifyEnrichmentFetchedAt?: string | null;
+  /** Google Maps URL for the place */
+  MapUrl?: string | null;
 }
 
 export interface SearchStatusResponse {
@@ -670,5 +672,6 @@ export function toLead(lead: LeadResponse) {
     similarMatches: similarMatches.length > 0 ? similarMatches : undefined,
     currentStep: lead.currentStep,
     apifyEnrichmentFetchedAt: lead.apifyEnrichmentFetchedAt ?? undefined,
+    mapUrl: lead.MapUrl ?? undefined,
   };
 }

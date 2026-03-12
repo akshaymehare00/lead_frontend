@@ -45,8 +45,9 @@ async function request<T>(
   const url = `${API_BASE}${path}`;
   const token = getToken();
 
+  const isFormData = options.body instanceof FormData;
   const headers: Record<string, string> = {
-    "Content-Type": "application/json",
+    ...(!isFormData && { "Content-Type": "application/json" }),
     ...(options.headers as Record<string, string>),
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
@@ -56,6 +57,14 @@ async function request<T>(
     ...options,
     headers,
   });
+
+  if (res.status === 401) {
+    setToken(null);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("lead-compass-user");
+      window.dispatchEvent(new CustomEvent("auth:session-expired"));
+    }
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -122,7 +131,15 @@ export interface SearchParamsApifyUrl {
   maxLead?: number;
 }
 
-export type SearchParams = SearchParamsNatural | SearchParamsManual | SearchParamsCurrentLocation | SearchParamsApify | SearchParamsApifyUrl;
+export interface SearchParamsCsvImport {
+  mode: "csv_import";
+  file: File;
+  maxLead?: number;
+  title?: string;
+  filterJewellery?: boolean;
+}
+
+export type SearchParams = SearchParamsNatural | SearchParamsManual | SearchParamsCurrentLocation | SearchParamsApify | SearchParamsApifyUrl | SearchParamsCsvImport;
 
 export interface PlaceSuggestion {
   id: string;
@@ -178,6 +195,8 @@ export interface LeadResponse {
   crmCheckMatches?: CrmCheckMatch[] | null;
   /** True when crmStatus is NEW or FOUND_SIMILAR (proceed to enrichment) */
   isNew?: boolean;
+  /** When Apify enrichment details were fetched. null = not yet fetched */
+  apifyEnrichmentFetchedAt?: string | null;
 }
 
 export interface SearchStatusResponse {
@@ -316,6 +335,26 @@ export interface MoveToEnrichmentResponse {
   >;
 }
 
+/** POST /api/v1/leads/fetch-enrichment-details — Response */
+export interface FetchEnrichmentDetailsResponse {
+  processed: number;
+  updated: number;
+  skipped: number;
+  failed: number;
+  results: Array<{
+    leadId: string;
+    status: "UPDATED" | "SKIPPED" | "FAILED";
+    reason?: string;
+    fetched?: {
+      phone?: string;
+      email?: string;
+      website?: string;
+      linkedin?: string;
+      instagram?: string;
+    };
+  }>;
+}
+
 /** POST /api/v1/leads/remove — Response */
 export interface RemoveLeadsResponse {
   removed: number;
@@ -435,6 +474,18 @@ export const api = {
         method: "POST",
         body: JSON.stringify(params),
       }),
+    /** CSV Import — upload CSV file, get leads in Create List */
+    csvImport: (params: { file: File; maxLead?: number; title?: string; filterJewellery?: boolean }) => {
+      const form = new FormData();
+      form.append("file", params.file);
+      if (params.maxLead != null) form.append("maxLead", String(params.maxLead));
+      if (params.title) form.append("title", params.title);
+      if (params.filterJewellery != null) form.append("filterJewellery", String(params.filterJewellery));
+      return request<SearchStartResponse & { id?: string; leads?: unknown[] }>("/api/v1/search/csv-import", {
+        method: "POST",
+        body: form,
+      });
+    },
     status: (searchSessionId: string) =>
       request<SearchStatusResponse>(`/api/v1/search/${searchSessionId}/status`),
     /** Optional AI query enhancement for natural language search */
@@ -548,6 +599,12 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
+    /** Fetch missing contact details via Apify (leads with googleMapsUrl, e.g. from CSV). Max 20 per request. */
+    fetchEnrichmentDetails: (leadIds: string[]) =>
+      request<FetchEnrichmentDetailsResponse>("/api/v1/leads/fetch-enrichment-details", {
+        method: "POST",
+        body: JSON.stringify({ leadIds }),
+      }),
     saveToCrm: (leadIds: string[]) =>
       request<{
         saved: number;
@@ -612,5 +669,6 @@ export function toLead(lead: LeadResponse) {
     checkedAt,
     similarMatches: similarMatches.length > 0 ? similarMatches : undefined,
     currentStep: lead.currentStep,
+    apifyEnrichmentFetchedAt: lead.apifyEnrichmentFetchedAt ?? undefined,
   };
 }

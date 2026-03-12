@@ -65,6 +65,8 @@ export default function Index() {
   const [enrichmentSelectedLeads, setEnrichmentSelectedLeads] = useState<Set<string>>(new Set());
   const [enrichmentLeads, setEnrichmentLeads] = useState<Lead[]>([]);
   const [isLoadingEnrichment, setIsLoadingEnrichment] = useState(false);
+  const [isFetchingEnrichment, setIsFetchingEnrichment] = useState(false);
+  const [fetchedEnrichmentLeadIds, setFetchedEnrichmentLeadIds] = useState<Set<string>>(new Set());
   const [collectDetailsLeads, setCollectDetailsLeads] = useState<Lead[]>([]);
   const [collectDetailsSelectedLeads, setCollectDetailsSelectedLeads] = useState<Set<string>>(new Set());
   const [isLoadingCollectDetails, setIsLoadingCollectDetails] = useState(false);
@@ -80,6 +82,7 @@ export default function Index() {
     setCrmCheckSelectedLeads(new Set());
     setEnrichmentLeads([]);
     setEnrichmentSelectedLeads(new Set());
+    setFetchedEnrichmentLeadIds(new Set());
     setCollectDetailsLeads([]);
     setCollectDetailsSelectedLeads(new Set());
     setMaxStepReached(1);
@@ -140,7 +143,9 @@ export default function Index() {
                 ? { mode: "apify", location: session.location ?? "", searchStrings: session.categories, maxLead: session.leadCount }
                 : session.mode === "APIFY_URL"
                   ? { mode: "apify_url", googleMapsUrl: (session as { googleMapsUrl?: string }).googleMapsUrl ?? "", maxLead: session.leadCount }
-                  : {
+                  : session.mode === "CSV_IMPORT"
+                    ? { mode: "csv_import", file: new File([], ""), maxLead: session.leadCount, title: session.title }
+                    : {
                     mode: "manual",
                     location: session.location ?? "",
                     categories: session.categories,
@@ -188,21 +193,32 @@ export default function Index() {
     try {
       const isApify = params.mode === "apify";
       const isApifyUrl = params.mode === "apify_url";
-      const { searchSessionId } = isApifyUrl
-        ? await api.search.apifyUrl({
-            googleMapsUrl: params.googleMapsUrl,
-            maxLead: params.maxLead ?? 20,
+      const isCsvImport = params.mode === "csv_import";
+      const res = isCsvImport
+        ? await api.search.csvImport({
+            file: params.file,
+            maxLead: params.maxLead ?? 100,
+            title: params.title,
+            filterJewellery: true,
           })
-        : isApify
-          ? await api.search.apify({
-              location: params.location,
-              searchStrings: params.searchStrings,
+        : isApifyUrl
+          ? await api.search.apifyUrl({
+              googleMapsUrl: params.googleMapsUrl,
               maxLead: params.maxLead ?? 20,
             })
-          : await api.search.start({
-              ...params,
-              maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
-            });
+          : isApify
+            ? await api.search.apify({
+                location: params.location,
+                searchStrings: params.searchStrings,
+                maxLead: params.maxLead ?? 20,
+              })
+            : await api.search.start({
+                ...params,
+                maxLead: params.maxLead ?? (params.mode === "natural" ? 20 : 10),
+              });
+
+      const searchSessionId = res.searchSessionId ?? (res as { id?: string }).id;
+      if (!searchSessionId) throw new Error("No session ID in response");
 
       // Track which session is currently searching
       setSearchingSessionId(searchSessionId);
@@ -210,9 +226,11 @@ export default function Index() {
       setActiveSessionId(searchSessionId);
 
       // Optimistically add this search to sidebar history immediately
-      const sessionTitle = isApifyUrl
-        ? "URL Search"
-        : isApify
+      const sessionTitle = isCsvImport
+        ? (params.title || "CSV Import")
+        : isApifyUrl
+          ? "URL Search"
+          : isApify
           ? (params.searchStrings?.length
               ? `Apify: ${params.searchStrings.join(", ")} in ${params.location}`
               : `Apify: ${params.location}`)
@@ -235,25 +253,36 @@ export default function Index() {
         ];
       });
 
-      const poll = async () => {
-        const status = await api.search.status(searchSessionId);
-        if (status.status === "COMPLETED" && status.leads) {
-          setLeads(status.leads.map(toLead));
-          setIsSearching(false);
-          setSearchingSessionId(null);
-          setCurrentStep(2);
-          setMaxStepReached((prev) => Math.max(prev, 2));
-          fetchSessions();
-        } else if (status.status === "FAILED") {
-          setIsSearching(false);
-          setSearchingSessionId(null);
-          const errMsg = (status as { errorMessage?: string }).errorMessage;
-          setSearchError(errMsg || "Search failed");
-        } else {
-          setTimeout(poll, POLL_INTERVAL);
-        }
-      };
-      poll();
+      // CSV import is synchronous — fetch session directly. Others poll status.
+      if (isCsvImport) {
+        const session = await api.sessions.get(searchSessionId);
+        setLeads(session.leads.map(toLead));
+        setIsSearching(false);
+        setSearchingSessionId(null);
+        setCurrentStep(2);
+        setMaxStepReached((prev) => Math.max(prev, 2));
+        fetchSessions();
+      } else {
+        const poll = async () => {
+          const status = await api.search.status(searchSessionId);
+          if (status.status === "COMPLETED" && status.leads) {
+            setLeads(status.leads.map(toLead));
+            setIsSearching(false);
+            setSearchingSessionId(null);
+            setCurrentStep(2);
+            setMaxStepReached((prev) => Math.max(prev, 2));
+            fetchSessions();
+          } else if (status.status === "FAILED") {
+            setIsSearching(false);
+            setSearchingSessionId(null);
+            const errMsg = (status as { errorMessage?: string }).errorMessage;
+            setSearchError(errMsg || "Search failed");
+          } else {
+            setTimeout(poll, POLL_INTERVAL);
+          }
+        };
+        poll();
+      }
     } catch (err) {
       setIsSearching(false);
       setSearchingSessionId(null);
@@ -454,6 +483,61 @@ export default function Index() {
         description: err instanceof Error ? err.message : "Failed to move leads to final list",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleFetchEnrichmentDetails = async (leadIds: string[]) => {
+    if (leadIds.length === 0) return;
+    const idsToFetch = leadIds.filter((id) => {
+      const lead = enrichmentLeads.find((l) => l.id === id);
+      return lead && lead.apifyEnrichmentFetchedAt == null;
+    });
+    if (idsToFetch.length === 0) {
+      toast({ title: "Already fetched", description: "All selected leads already have details fetched.", variant: "default" });
+      return;
+    }
+    if (idsToFetch.length > 20) {
+      toast({ title: "Too many leads", description: "Maximum 20 leads per request.", variant: "destructive" });
+      return;
+    }
+    setIsFetchingEnrichment(true);
+    try {
+      const res = await api.leads.fetchEnrichmentDetails(idsToFetch);
+      const updatedIds = new Set<string>();
+      setEnrichmentLeads((prev) =>
+        prev.map((lead) => {
+          const result = res.results.find((r) => r.leadId === lead.id);
+          if (!result || result.status !== "UPDATED" || !result.fetched) return lead;
+          updatedIds.add(lead.id);
+          return {
+            ...lead,
+            phone: lead.phone || result.fetched.phone,
+            email: lead.email || result.fetched.email,
+            website: lead.website || result.fetched.website,
+            linkedin: lead.linkedin || result.fetched.linkedin,
+            instagram: lead.instagram || result.fetched.instagram,
+            apifyEnrichmentFetchedAt: new Date().toISOString(),
+          };
+        })
+      );
+      setFetchedEnrichmentLeadIds((prev) => new Set([...prev, ...updatedIds]));
+      toast({
+        title: (
+          <span className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
+            Fetching complete
+          </span>
+        ),
+        description: `Found details for ${res.updated} lead${res.updated === 1 ? "" : "s"}.${res.skipped > 0 || res.failed > 0 ? ` (${res.skipped} skipped, ${res.failed} failed)` : ""}`,
+      });
+    } catch (err) {
+      toast({
+        title: "Fetch failed",
+        description: err instanceof Error ? err.message : "Failed to fetch enrichment details",
+        variant: "destructive",
+      });
+    } finally {
+      setIsFetchingEnrichment(false);
     }
   };
 
@@ -990,6 +1074,9 @@ export default function Index() {
                 onBack={() => { setViewMode("crm-check"); setCurrentStep(3); }}
                 onMoveToCollectDetails={moveToCollectDetails}
                 onViewLead={setActiveLead}
+                onFetchMissingDetails={handleFetchEnrichmentDetails}
+                isFetchingEnrichment={isFetchingEnrichment}
+                fetchedEnrichmentLeadIds={fetchedEnrichmentLeadIds}
               />
             ) : viewMode === "collect-details" ? (
               <CollectDetailsView
@@ -1658,6 +1745,9 @@ function EnrichmentView({
   onBack,
   onMoveToCollectDetails,
   onViewLead,
+  onFetchMissingDetails,
+  isFetchingEnrichment,
+  fetchedEnrichmentLeadIds,
 }: {
   leads: Lead[];
   isLoading?: boolean;
@@ -1671,6 +1761,9 @@ function EnrichmentView({
   onBack: () => void;
   onMoveToCollectDetails: (leadIds: string[]) => void;
   onViewLead: (lead: Lead) => void;
+  onFetchMissingDetails: (leadIds: string[]) => void;
+  isFetchingEnrichment?: boolean;
+  fetchedEnrichmentLeadIds?: Set<string>;
 }) {
   if (isLoadingStage) {
     return (
@@ -1741,6 +1834,14 @@ function EnrichmentView({
         </div>
       </div>
 
+      {isFetchingEnrichment && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="w-16 h-16 border-4 border-primary/30 border-t-primary rounded-full animate-spin" />
+          <p className="mt-4 text-sm font-semibold text-foreground">Fetching missing details...</p>
+          <p className="mt-1 text-xs text-muted-foreground">This may take 1–2 minutes per lead</p>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
         {leads.map((lead) => (
           <ClickableLeadCard
@@ -1749,6 +1850,7 @@ function EnrichmentView({
             selected={selectedLeads.has(lead.id)}
             onToggle={onToggle}
             onView={onViewLead}
+            fetchedDetails={fetchedEnrichmentLeadIds?.has(lead.id) || !!lead.apifyEnrichmentFetchedAt}
           />
         ))}
       </div>
@@ -1759,6 +1861,20 @@ function EnrichmentView({
             <span className="text-primary font-bold">{selectedLeads.size}</span> selected
           </p>
           <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onFetchMissingDetails(Array.from(selectedLeads))}
+              disabled={isFetchingEnrichment || selectedLeads.size > 20}
+              className="gap-2"
+            >
+              {isFetchingEnrichment ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Zap className="w-3.5 h-3.5" />
+              )}
+              Fetch Missing Details
+            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -2094,7 +2210,9 @@ function ResultsView({
                   ? `Searching via Apify... ${searchMeta.searchStrings?.length ? searchMeta.searchStrings.join(", ") + " in " : ""}${searchMeta.location}`
                   : searchMeta?.mode === "apify_url"
                     ? "Searching via URL..."
-                    : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
+                    : searchMeta?.mode === "csv_import"
+                      ? "Importing CSV..."
+                      : `${searchMeta?.categories?.join(", ")} in ${searchMeta?.location ?? ""}`}
           </p>
         </div>
       </div>
@@ -2151,6 +2269,10 @@ function ResultsView({
         ) : searchMeta?.mode === "apify_url" ? (
           <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
             <Search className="w-3 h-3 text-primary" />URL Search
+          </span>
+        ) : searchMeta?.mode === "csv_import" ? (
+          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs text-muted-foreground font-medium">
+            <Search className="w-3 h-3 text-primary" />CSV Import
           </span>
         ) : (
           <>
@@ -2278,7 +2400,7 @@ function ResultsView({
 
 /* ─── Lead card with optional View button ─── */
 function ClickableLeadCard({
-  lead, selected, onToggle, onView, companyColor, siblingLeads, showViewButton = true,
+  lead, selected, onToggle, onView, companyColor, siblingLeads, showViewButton = true, fetchedDetails,
 }: {
   lead: Lead;
   selected: boolean;
@@ -2287,9 +2409,10 @@ function ClickableLeadCard({
   companyColor?: string;
   siblingLeads?: Lead[];
   showViewButton?: boolean;
+  fetchedDetails?: boolean;
 }) {
   return (
-    <div className="relative group min-h-[220px] h-full flex flex-col">
+    <div className={cn("relative group h-full flex flex-col", showViewButton ? "min-h-[260px]" : "min-h-[220px]")}>
       <LeadCard
         lead={lead}
         selected={selected}
@@ -2297,11 +2420,13 @@ function ClickableLeadCard({
         companyColor={companyColor}
         siblingLeads={siblingLeads}
         onViewSibling={onView}
+        fetchedDetails={fetchedDetails}
+        extendForViewButton={showViewButton}
       />
       {showViewButton && (
         <button
           onClick={(e) => { e.stopPropagation(); onView(lead); }}
-          className="absolute bottom-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity text-[11px] px-2.5 py-1.5 rounded-md bg-primary/15 border border-primary/30 text-primary font-semibold hover:bg-primary/25 z-10"
+          className="absolute bottom-1 right-3 opacity-0 group-hover:opacity-100 transition-opacity text-[11px] px-2.5 py-1.5 rounded-md bg-primary/15 border border-primary/30 text-primary font-semibold hover:bg-primary/25 z-10"
         >
           View →
         </button>

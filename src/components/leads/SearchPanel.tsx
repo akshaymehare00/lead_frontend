@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { ChevronDown, Zap, SlidersHorizontal, Loader2, LocateFixed } from "lucide-react";
+import { useState, useCallback, useRef } from "react";
+import { ChevronDown, Zap, SlidersHorizontal, Loader2, LocateFixed, FileSpreadsheet, X } from "lucide-react";
 import { LocationAutocomplete } from "./LocationAutocomplete";
 import { reverseGeocode } from "@/lib/google-maps";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,8 @@ export type SearchParams =
   | { mode: "manual"; location: string; categories: string[]; maxLead: number }
   | { mode: "current_location"; latitude: number; longitude: number; radiusKm: number; maxLead: number }
   | { mode: "apify"; location: string; searchStrings?: string[]; maxLead: number }
-  | { mode: "apify_url"; googleMapsUrl: string; maxLead: number };
+  | { mode: "apify_url"; googleMapsUrl: string; maxLead: number }
+  | { mode: "csv_import"; file: File; maxLead: number; title?: string };
 
 const CATEGORIES = [
   "Polished Dealers",
@@ -22,6 +23,7 @@ const CATEGORIES = [
 
 const LEAD_COUNTS = [10, 20, 30, 50, 100];
 const LEAD_COUNTS_URL = [10, 20, 30, 50, 100, 120];
+const LEAD_COUNTS_CSV = [50, 100, 150, 200, 300, 500];
 
 function getBestPosition(targetAccuracy = 100, maxWaitMs = 15_000): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
@@ -71,12 +73,16 @@ interface SearchPanelProps {
   compact?: boolean;
 }
 
-export type SearchSource = "serpapi" | "apify" | "url";
+export type SearchSource = "serpapi" | "apify" | "url" | "csv";
 
 export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps) => {
   const [searchSource, setSearchSource] = useState<SearchSource>("serpapi");
   const [location, setLocation] = useState("");
   const [googleMapsUrl, setGoogleMapsUrl] = useState("");
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [csvTitle, setCsvTitle] = useState("");
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [leadCount, setLeadCount] = useState(10);
   const [countOpen, setCountOpen] = useState(false);
@@ -119,6 +125,11 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   }, []);
 
   const handleSearch = () => {
+    if (searchSource === "csv") {
+      if (!csvFile) return;
+      onSearch({ mode: "csv_import", file: csvFile, maxLead: leadCount, title: csvTitle.trim() || undefined });
+      return;
+    }
     if (searchSource === "url") {
       if (!googleMapsUrl.trim() || !googleMapsUrl.includes("google.com/maps/")) return;
       onSearch({ mode: "apify_url", googleMapsUrl: googleMapsUrl.trim(), maxLead: leadCount });
@@ -139,10 +150,29 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   };
 
   const canSearch =
-    searchSource === "url"
-      ? googleMapsUrl.trim().length > 0 && googleMapsUrl.includes("google.com/maps/")
-      : location.trim().length > 0 &&
-        (searchSource === "apify" || selectedCategories.length > 0);
+    searchSource === "csv"
+      ? !!csvFile
+      : searchSource === "url"
+        ? googleMapsUrl.trim().length > 0 && googleMapsUrl.includes("google.com/maps/")
+        : location.trim().length > 0 &&
+          (searchSource === "apify" || selectedCategories.length > 0);
+
+  const handleCsvDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.toLowerCase().endsWith(".csv")) {
+      setCsvFile(file);
+    }
+  };
+
+  const handleCsvSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.name.toLowerCase().endsWith(".csv")) {
+      setCsvFile(file);
+    }
+    e.target.value = "";
+  };
 
   return (
     <div className={compact ? "space-y-4" : "p-6 space-y-5"}>
@@ -189,15 +219,87 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
             />
             <span className="text-sm font-medium">URL Search</span>
           </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="searchSource"
+              checked={searchSource === "csv"}
+              onChange={() => setSearchSource("csv")}
+              className="w-4 h-4 text-primary border-border focus:ring-primary"
+            />
+            <span className="text-sm font-medium">CSV Search</span>
+          </label>
         </div>
         <p className="text-[11px] text-muted-foreground">
           {searchSource === "serpapi"
             ? "AI-filtered results with ranking"
             : searchSource === "apify"
               ? "Raw Google Maps results (no AI filter). Leave empty for default terms."
-              : "Paste a Google Maps search URL to scrape leads directly."}
+              : searchSource === "url"
+                ? "Paste a Google Maps search URL to scrape leads directly."
+                : "Upload a CSV file (e.g. Google Maps export) to import leads."}
         </p>
       </div>
+
+      {/* CSV Search — only when CSV Search selected */}
+      {searchSource === "csv" && (
+        <div className="space-y-3">
+          <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+            CSV File
+          </label>
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleCsvDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={cn(
+              "flex flex-col items-center justify-center gap-2 py-8 px-4 rounded-lg border-2 border-dashed cursor-pointer transition-colors",
+              isDragging ? "border-primary bg-primary/5" : "border-border bg-secondary/30 hover:bg-secondary/50",
+              csvFile && "border-primary/40 bg-primary/5"
+            )}
+          >
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv"
+              onChange={handleCsvSelect}
+              className="hidden"
+            />
+            {csvFile ? (
+              <>
+                <FileSpreadsheet className="w-10 h-10 text-primary" />
+                <span className="text-sm font-medium text-foreground">{csvFile.name}</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setCsvFile(null); }}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive"
+                >
+                  <X className="w-3 h-3" /> Remove
+                </button>
+              </>
+            ) : (
+              <>
+                <FileSpreadsheet className="w-10 h-10 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Drag & drop CSV or click to select</span>
+                <span className="text-[11px] text-muted-foreground/80">CSV files only</span>
+              </>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Session Title (optional)
+            </label>
+            <input
+              type="text"
+              value={csvTitle}
+              onChange={(e) => setCsvTitle(e.target.value)}
+              placeholder="e.g. Diamond Bourse Mumbai"
+              disabled={isSearching}
+              className="w-full px-4 py-2.5 rounded-lg border border-border bg-secondary/50 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+            />
+          </div>
+        </div>
+      )}
 
       {/* URL Search — only when URL Search selected */}
       {searchSource === "url" && (
@@ -219,8 +321,8 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
         </div>
       )}
 
-      {/* Location — hidden when URL Search */}
-      {searchSource !== "url" && (
+      {/* Location — hidden when URL Search or CSV Search */}
+      {searchSource !== "url" && searchSource !== "csv" && (
       <div className="space-y-1.5">
         <div className="flex items-center justify-between">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Location</label>
@@ -252,8 +354,8 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
       </div>
       )}
 
-      {/* Business Category / Search Terms — hidden when URL Search */}
-      {searchSource !== "url" && (
+      {/* Business Category / Search Terms — hidden when URL Search or CSV Search */}
+      {searchSource !== "url" && searchSource !== "csv" && (
       <div className="space-y-2">
         <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
           {searchSource === "apify" ? "Search Terms (optional)" : "Business Category"}
@@ -295,7 +397,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
           </button>
           {countOpen && (
             <div className="absolute top-full mt-1 w-full bg-card border border-border rounded-lg shadow-lg z-10 overflow-hidden animate-slide-up">
-              {(searchSource === "url" ? LEAD_COUNTS_URL : LEAD_COUNTS).map((c) => (
+              {(searchSource === "url" ? LEAD_COUNTS_URL : searchSource === "csv" ? LEAD_COUNTS_CSV : LEAD_COUNTS).map((c) => (
                 <button
                   key={c}
                   onClick={() => { setLeadCount(c); setCountOpen(false); }}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Star, Phone, Globe, MapPin, Clock, CheckSquare, Square, ExternalLink, CheckCircle2, Store } from "lucide-react";
+import { Star, Phone, Globe, MapPin, CheckSquare, Square, ExternalLink, CheckCircle2, Store } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
@@ -80,6 +80,8 @@ export interface Lead {
   enrichmentSources?: { source: string; done: boolean }[];
   /** Workflow step (6 = enrichment, 7 = final) */
   currentStep?: number;
+  /** When Apify enrichment details were fetched. null/undefined = not yet fetched */
+  apifyEnrichmentFetchedAt?: string | null;
 }
 
 interface LeadCardProps {
@@ -92,9 +94,13 @@ interface LeadCardProps {
   siblingLeads?: Lead[];
   /** Callback when user chooses to view a sibling lead */
   onViewSibling?: (lead: Lead) => void;
+  /** Show "Details Fetched" badge (from Fetch Missing Details in enrichment) */
+  fetchedDetails?: boolean;
+  /** Extra bottom padding for View button (keeps button inside card) */
+  extendForViewButton?: boolean;
 }
 
-export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads, onViewSibling }: LeadCardProps) => {
+export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads, onViewSibling, fetchedDetails, extendForViewButton }: LeadCardProps) => {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const hasSiblings = siblingLeads && siblingLeads.length > 0;
   return (
@@ -102,6 +108,7 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
       onClick={() => onToggle(lead.id)}
       className={cn(
         "relative rounded-xl border p-4 cursor-pointer transition-all duration-200 group flex flex-col min-h-[220px] h-full overflow-hidden",
+        extendForViewButton && "min-h-[260px] pb-10",
         selected
           ? "bg-accent border-primary/40 shadow-[0_0_16px_hsl(214_100%_58%/0.1)]"
           : "bg-card border-border hover:border-primary/20 hover:bg-surface-2",
@@ -177,6 +184,12 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
                 Enriched
               </span>
             )}
+            {fetchedDetails && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-success/15 border border-success/30 text-success font-medium flex items-center gap-1">
+                <CheckCircle2 className="w-2.5 h-2.5" />
+                Details Fetched
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -214,12 +227,6 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
               <span className="truncate">{lead.website}</span>
               <ExternalLink className="w-2.5 h-2.5 flex-shrink-0" />
             </a>
-          </div>
-        )}
-        {lead.hours && (
-          <div className="flex items-center gap-2">
-            <Clock className="w-3.5 h-3.5 text-muted-foreground/50 flex-shrink-0" />
-            <span className="text-xs text-muted-foreground truncate">{lead.hours}</span>
           </div>
         )}
       </div>

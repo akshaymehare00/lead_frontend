@@ -134,7 +134,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
               <ContactField icon={Building2} label="Company" value={`${lead.name} · ${lead.category}`} filled />
               <ContactField icon={MapPin} label="Address" value={lead.address} filled={!!lead.address} />
               <ContactField icon={Phone} label="Phone" value={lead.phone ?? "—"} filled={!!lead.phone} />
-              <ContactField icon={Mail} label="Email" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} isMailto />
+              <ContactField icon={Mail} label="Email" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} />
               <ContactField icon={User} label="Contact Person" value={fullLead?.contactPerson ?? lead.contactPerson ?? "—"} filled={!!(fullLead?.contactPerson || lead.contactPerson)} />
               <ContactField icon={Clock} label="Hours" value={lead.hours ? formatHoursWithIST(lead.hours, lead.address ?? "") : "—"} filled={!!lead.hours} />
             </div>

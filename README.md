@@ -71,7 +71,7 @@ Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and 
 1. Build command: `npm run build`
 2. Output directory: `dist`
 3. **Set environment variable** for production:
-   - `VITE_API_URL` = `https://lead-backend-ehky.onrender.com` (live API)
+   - `VITE_API_URL` = `https://lead-backend-1-kcve.onrender.com` (live API)
 
 The app uses this API URL when deployed. Local dev uses `http://localhost:3000` via `.env.local`.
 

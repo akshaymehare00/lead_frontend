@@ -5,7 +5,7 @@
 
 const API_BASE =
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.PROD ? "https://lead-backend-ehky.onrender.com" : "http://localhost:3000");
+  (import.meta.env.PROD ? "https://lead-backend-1-kcve.onrender.com" : "http://localhost:3000");
 
 const TOKEN_KEY = "lead-compass-token";
 

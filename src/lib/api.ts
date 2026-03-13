@@ -199,6 +199,12 @@ export interface LeadResponse {
   apifyEnrichmentFetchedAt?: string | null;
   /** Google Maps URL for the place */
   MapUrl?: string | null;
+  /** Duplicate store group ID (null if unique) */
+  duplicateStoreGroup?: string | null;
+  /** Number of leads in the duplicate store group (1 if unique) */
+  duplicateStoreCount?: number;
+  /** Names of other leads in the same duplicate store group */
+  duplicateStoreNames?: string[];
 }
 
 export interface SearchStatusResponse {
@@ -223,6 +229,13 @@ export interface SessionStagesInfo {
   unlocked: boolean;
 }
 
+export interface ChainStoreGroup {
+  brandName: string;
+  groupId: string;
+  count: number;
+  leads: { id: string; name: string; address: string }[];
+}
+
 export interface SessionDetailResponse extends SessionListItem {
   mode: string;
   location: string | null;
@@ -232,6 +245,9 @@ export interface SessionDetailResponse extends SessionListItem {
   duplicateCount?: number;
   crmCheckCount?: number;
   enrichmentCount?: number;
+  duplicateStoreGroups?: number;
+  duplicateStoreLeads?: number;
+  chainStores?: ChainStoreGroup[];
   stages?: {
     create_list?: SessionStagesInfo;
     crm_check?: SessionStagesInfo;
@@ -673,5 +689,8 @@ export function toLead(lead: LeadResponse) {
     currentStep: lead.currentStep,
     apifyEnrichmentFetchedAt: lead.apifyEnrichmentFetchedAt ?? undefined,
     mapUrl: lead.MapUrl ?? undefined,
+    duplicateStoreGroup: lead.duplicateStoreGroup ?? undefined,
+    duplicateStoreCount: lead.duplicateStoreCount ?? 1,
+    duplicateStoreNames: lead.duplicateStoreNames ?? [],
   };
 }

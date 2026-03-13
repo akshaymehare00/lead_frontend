@@ -15,12 +15,12 @@ import {
   CheckCircle2, XCircle, Loader2, Phone, Globe, Star, RefreshCw, ArrowLeft,
   CheckSquare, Square,   ChevronRight, ChevronLeft,
   PanelLeftClose, PanelLeftOpen,
-  AlertTriangle, Trash2
+  AlertTriangle, Trash2, Store
 } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { api, toLead, type CrmCheckSimilarMatch, type BulkCrmCheckOkItem } from "@/lib/api";
+import { api, toLead, type CrmCheckSimilarMatch, type BulkCrmCheckOkItem, type ChainStoreGroup } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { generateLeadsCsv, generateFullLeadsCsv, downloadCsv } from "@/lib/csv-export";
 
@@ -75,6 +75,7 @@ export default function Index() {
   const [leadsListFilter, setLeadsListFilter] = useState<"all" | "enriched" | "pending">("all");
   const [isLoadingLeadsList, setIsLoadingLeadsList] = useState(false);
   const [isSavingAndCheckDuplicate, setIsSavingAndCheckDuplicate] = useState(false);
+  const [chainStores, setChainStores] = useState<ChainStoreGroup[]>([]);
 
   // Clear stage state when switching sessions
   useEffect(() => {
@@ -121,6 +122,7 @@ export default function Index() {
     if (!activeSessionId) {
       setLeads([]);
       setSessionCrmStats({});
+      setChainStores([]);
       setIsLoadingSession(false);
       return;
     }
@@ -130,6 +132,7 @@ export default function Index() {
       .get(activeSessionId)
       .then((session) => {
         setLeads(session.leads.map(toLead));
+        setChainStores(session.chainStores ?? []);
         setSessionCrmStats({
           savedCount: session.savedCount,
           duplicateCount: session.duplicateCount,
@@ -257,6 +260,7 @@ export default function Index() {
       if (isCsvImport) {
         const session = await api.sessions.get(searchSessionId);
         setLeads(session.leads.map(toLead));
+        setChainStores(session.chainStores ?? []);
         setIsSearching(false);
         setSearchingSessionId(null);
         setCurrentStep(2);
@@ -317,6 +321,7 @@ export default function Index() {
   const handleNew = () => {
     setViewMode("dashboard");
     setLeads([]);
+    setChainStores([]);
     setSelectedLeads(new Set());
     setSearchMeta(null);
     setCurrentStep(1);
@@ -856,6 +861,7 @@ export default function Index() {
       if (activeSessionId === sessionId) {
         setActiveSessionId(null);
         setLeads([]);
+        setChainStores([]);
         setSearchMeta(null);
         setViewMode("dashboard");
         setCurrentStep(1);
@@ -1117,6 +1123,7 @@ export default function Index() {
             ) : (
               <ResultsView
                 leads={leads}
+                chainStores={chainStores}
                 selectedLeads={selectedLeads}
                 onToggle={toggleLead}
                 onSelectAllNew={selectAllNew}
@@ -1191,7 +1198,7 @@ function isLabGrownDiamond(lead: { name?: string; category?: string }): boolean 
   return name.includes(labGrown) || category.includes(labGrown);
 }
 
-type CrmCheckFilter = "all" | "saved" | "duplicate" | "similar" | "labGrown";
+type CrmCheckFilter = "all" | "nonDuplicate" | "duplicate" | "similar";
 
 /* ─── CRM Duplicate Check View ─── */
 function CrmCheckView({
@@ -1239,7 +1246,7 @@ function CrmCheckView({
   const pendingCount = leads.filter(
     (l) => l.crmStatus === "PENDING" || !l.checkedAt || l.crmStatus === undefined
   ).length;
-  const savedCount = leads.filter((l) => l.isNew === false).length;
+  const nonDuplicateCount = leads.filter((l) => l.crmStatus === "NEW" && !l.duplicateOf && (l.similarMatches?.length ?? 0) === 0 && !!(l.checkedAt || l.crmCheckedAt)).length;
   const duplicateCount = leads.filter((l) => l.crmStatus === "DUPLICATE").length;
   const similarCount = leads.filter(
     (l) => (l.similarMatches?.length ?? 0) > 0 && !l.duplicateOf
@@ -1252,14 +1259,12 @@ function CrmCheckView({
 
   const filteredLeads = (() => {
     switch (filter) {
-      case "saved":
-        return leads.filter((l) => l.isNew === false);
+      case "nonDuplicate":
+        return leads.filter((l) => l.crmStatus === "NEW" && !l.duplicateOf && (l.similarMatches?.length ?? 0) === 0 && !!(l.checkedAt || l.crmCheckedAt));
       case "duplicate":
         return leads.filter((l) => l.crmStatus === "DUPLICATE");
       case "similar":
         return leads.filter((l) => (l.similarMatches?.length ?? 0) > 0 && !l.duplicateOf);
-      case "labGrown":
-        return leads.filter(isLabGrownDiamond);
       default:
         return leads;
     }
@@ -1357,10 +1362,9 @@ function CrmCheckView({
             onClick={() => {
               const filtered = (() => {
                 switch (filter) {
-                  case "saved": return leads.filter((l) => l.isNew === false);
+                  case "nonDuplicate": return leads.filter((l) => l.crmStatus === "NEW" && !l.duplicateOf && (l.similarMatches?.length ?? 0) === 0 && !!(l.checkedAt || l.crmCheckedAt));
                   case "duplicate": return leads.filter((l) => l.crmStatus === "DUPLICATE");
                   case "similar": return leads.filter((l) => (l.similarMatches?.length ?? 0) > 0 && !l.duplicateOf);
-                  case "labGrown": return leads.filter(isLabGrownDiamond);
                   default: return leads;
                 }
               })();
@@ -1378,10 +1382,9 @@ function CrmCheckView({
         {(
           [
             { id: "all" as const, label: "All", count: leads.length },
-            { id: "saved" as const, label: "Saved", count: savedCount },
+            { id: "nonDuplicate" as const, label: "Non Duplicate", count: nonDuplicateCount },
             { id: "duplicate" as const, label: "Duplicate", count: duplicateCount },
             { id: "similar" as const, label: "Found Similar", count: similarCount },
-            { id: "labGrown" as const, label: "Lab Grown", count: labGrownCount },
           ] as const
         ).map(({ id, label, count }) => (
           <button
@@ -1414,13 +1417,11 @@ function CrmCheckView({
               {filter === "all"
                 ? "No leads"
                 : `No leads match "${
-                    filter === "saved"
-                      ? "Saved"
+                    filter === "nonDuplicate"
+                      ? "Non Duplicate"
                       : filter === "duplicate"
                         ? "Duplicate"
-                        : filter === "similar"
-                          ? "Found Similar"
-                          : "Lab Grown"
+                        : "Found Similar"
                   }" filter`}
             </p>
             {filter !== "all" && (
@@ -2098,43 +2099,6 @@ function DashboardView({
         </div>
       </div>
 
-      {/* Stats */}
-      <StatsBar onStatClick={onStatClick} />
-
-      {/* Recent Sessions */}
-      {sessions.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <RefreshCw className="w-4 h-4 text-muted-foreground" />
-            Recent Searches
-          </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {sessions.slice(0, 6).map((s) => (
-              <button
-                key={s.id}
-                onClick={() => onSelectSession(s.id)}
-                className="flex items-start gap-3 p-4 rounded-xl border border-border bg-card text-left transition-all hover:border-primary/30 hover:bg-primary/5 group"
-              >
-                <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                  <Search className="w-4 h-4 text-primary" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground truncate group-hover:text-primary transition-colors">{s.title}</p>
-                  <div className="flex items-center gap-2 mt-1">
-                    <span className="text-xs text-muted-foreground">{s.time}</span>
-                    {typeof s.leadCount === "number" && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                        {s.leadCount} leads
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground/40 group-hover:text-primary flex-shrink-0 mt-1 transition-colors" />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -2142,6 +2106,7 @@ function DashboardView({
 /* ─── Results ─── */
 function ResultsView({
   leads,
+  chainStores,
   selectedLeads,
   onToggle,
   onSelectAllNew,
@@ -2160,6 +2125,7 @@ function ResultsView({
   onClearSelection,
 }: {
   leads: Lead[];
+  chainStores?: ChainStoreGroup[];
   selectedLeads: Set<string>;
   onToggle: (id: string) => void;
   onSelectAllNew: (leadIds?: string[]) => void;
@@ -2177,7 +2143,17 @@ function ResultsView({
   isRemoving?: boolean;
   onClearSelection: () => void;
 }) {
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  const [categoryFilters, setCategoryFilters] = useState<Set<string>>(new Set());
+  const [chainStoreFilter, setChainStoreFilter] = useState(false);
+
+  const toggleCategoryFilter = (label: string) => {
+    setCategoryFilters((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) next.delete(label);
+      else next.add(label);
+      return next;
+    });
+  };
 
   const categoryFilterOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -2188,24 +2164,32 @@ function ResultsView({
     return Array.from(seen).sort((a, b) => a.localeCompare(b));
   }, [leads]);
 
-  const displayedLeads = useMemo(
-    () =>
-      categoryFilter
-        ? leads.filter((l) => matchesCategoryFilter(l, categoryFilter))
-        : leads,
-    [leads, categoryFilter]
-  );
-
-  // Group leads by name (same company, different locations) — accent colors + sibling list
-  const { companyColors, companySiblings } = useMemo(() => {
-    const byName = new Map<string, Lead[]>();
-    for (const l of leads) {
-      const list = byName.get(l.name) ?? [];
-      list.push(l);
-      byName.set(l.name, list);
+  const chainStoreLeadIds = useMemo(() => {
+    if (!chainStores?.length) return new Set<string>();
+    const ids = new Set<string>();
+    for (const group of chainStores) {
+      for (const gl of group.leads) ids.add(gl.id);
     }
+    return ids;
+  }, [chainStores]);
+
+  const displayedLeads = useMemo(() => {
+    let filtered = leads;
+    if (categoryFilters.size > 0) {
+      filtered = filtered.filter((l) => {
+        const norm = normalizeCategoryForFilter(l.category ?? "");
+        return categoryFilters.has(norm);
+      });
+    }
+    if (chainStoreFilter) {
+      filtered = filtered.filter((l) => chainStoreLeadIds.has(l.id));
+    }
+    return filtered;
+  }, [leads, categoryFilters, chainStoreFilter, chainStoreLeadIds]);
+
+  // Color-code leads by duplicate store group from backend
+  const companyColors = useMemo(() => {
     const leadToColor = new Map<string, string>();
-    const leadToSiblings = new Map<string, Lead[]>();
     const BORDERS = [
       "border-l-4 border-l-blue-500/80",
       "border-l-4 border-l-emerald-500/80",
@@ -2214,18 +2198,18 @@ function ResultsView({
       "border-l-4 border-l-rose-500/80",
       "border-l-4 border-l-cyan-500/80",
     ];
+    const groupColors = new Map<string, string>();
     let idx = 0;
-    for (const [, group] of byName) {
-      if (group.length > 1) {
-        const c = BORDERS[idx % BORDERS.length];
-        for (const l of group) {
-          leadToColor.set(l.id, c);
-          leadToSiblings.set(l.id, group.filter((x) => x.id !== l.id));
+    for (const l of displayedLeads) {
+      if (l.duplicateStoreGroup && (l.duplicateStoreCount ?? 1) > 1) {
+        if (!groupColors.has(l.duplicateStoreGroup)) {
+          groupColors.set(l.duplicateStoreGroup, BORDERS[idx % BORDERS.length]);
+          idx++;
         }
-        idx++;
+        leadToColor.set(l.id, groupColors.get(l.duplicateStoreGroup)!);
       }
     }
-    return { companyColors: leadToColor, companySiblings: leadToSiblings };
+    return leadToColor;
   }, [displayedLeads]);
 
   if (isSearching) {
@@ -2320,41 +2304,57 @@ function ResultsView({
           </>
         )}
         <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-xs text-primary font-semibold">
-          <Shield className="w-3 h-3" />{categoryFilter ? `${displayedLeads.length} of ${leads.length}` : leads.length} leads found
+          <Shield className="w-3 h-3" />{(categoryFilters.size > 0 || chainStoreFilter) ? `${displayedLeads.length} of ${leads.length}` : leads.length} leads found
         </span>
         <span className="w-px h-5 bg-border" />
         <span className="text-xs text-muted-foreground font-medium">Filter:</span>
-        <button
-          type="button"
-          onClick={() => setCategoryFilter(null)}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border",
-            !categoryFilter
-              ? "bg-primary/15 border-primary/30 text-primary"
-              : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
-          )}
-        >
-          All
-          <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", !categoryFilter ? "bg-primary/20" : "bg-muted")}>
-            {leads.length}
-          </span>
-        </button>
+        {(categoryFilters.size > 0 || chainStoreFilter) && (
+          <button
+            type="button"
+            onClick={() => { setCategoryFilters(new Set()); setChainStoreFilter(false); }}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-medium transition-all border border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20"
+          >
+            Clear all ×
+          </button>
+        )}
+        {chainStores && chainStores.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setChainStoreFilter((v) => !v)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border",
+              chainStoreFilter
+                ? "bg-violet-500/15 border-violet-500/30 text-violet-600 dark:text-violet-400"
+                : "bg-violet-500/10 border-violet-500/20 text-violet-500 dark:text-violet-400 hover:bg-violet-500/15"
+            )}
+          >
+            <Store className="w-3 h-3" />
+            Chain Store
+            <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", chainStoreFilter ? "bg-violet-500/20" : "bg-violet-500/10")}>
+              {chainStoreLeadIds.size}
+            </span>
+          </button>
+        )}
         {categoryFilterOptions.map((label) => {
-          const count = leads.filter((l) => matchesCategoryFilter(l, label)).length;
+          const active = categoryFilters.has(label);
+          const count = leads.filter((l) => {
+            const norm = normalizeCategoryForFilter(l.category ?? "");
+            return norm === label;
+          }).length;
           return (
             <button
               key={label}
               type="button"
-              onClick={() => setCategoryFilter(label)}
+              onClick={() => toggleCategoryFilter(label)}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all border",
-                categoryFilter === label
+                active
                   ? "bg-primary/15 border-primary/30 text-primary"
                   : "bg-secondary/50 border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
               )}
             >
               {label}
-              <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", categoryFilter === label ? "bg-primary/20" : "bg-muted")}>
+              <span className={cn("rounded-full px-1.5 py-0.5 text-[10px]", active ? "bg-primary/20" : "bg-muted")}>
                 {count}
               </span>
             </button>
@@ -2394,15 +2394,15 @@ function ResultsView({
         {displayedLeads.length === 0 ? (
           <div className="col-span-2 xl:col-span-3 py-12 text-center rounded-xl border border-dashed border-border bg-muted/30">
             <p className="text-sm text-muted-foreground">
-              {categoryFilter ? `No leads match "${categoryFilter}"` : "No leads"}
+              {(categoryFilters.size > 0 || chainStoreFilter) ? `No leads match the selected filters` : "No leads"}
             </p>
-            {categoryFilter && (
+            {(categoryFilters.size > 0 || chainStoreFilter) && (
               <button
                 type="button"
-                onClick={() => setCategoryFilter(null)}
+                onClick={() => { setCategoryFilters(new Set()); setChainStoreFilter(false); }}
                 className="mt-2 text-xs text-primary hover:underline"
               >
-                Show all leads
+                Clear filters
               </button>
             )}
           </div>
@@ -2415,7 +2415,6 @@ function ResultsView({
               onToggle={onToggle}
               onView={onViewLead}
               companyColor={companyColors.get(lead.id)}
-              siblingLeads={companySiblings.get(lead.id)}
               showViewButton={false}
             />
           ))
@@ -2460,14 +2459,13 @@ function ResultsView({
 
 /* ─── Lead card with optional View button ─── */
 function ClickableLeadCard({
-  lead, selected, onToggle, onView, companyColor, siblingLeads, showViewButton = true, fetchedDetails,
+  lead, selected, onToggle, onView, companyColor, showViewButton = true, fetchedDetails,
 }: {
   lead: Lead;
   selected: boolean;
   onToggle: (id: string) => void;
   onView: (lead: Lead) => void;
   companyColor?: string;
-  siblingLeads?: Lead[];
   showViewButton?: boolean;
   fetchedDetails?: boolean;
 }) {
@@ -2478,7 +2476,6 @@ function ClickableLeadCard({
         selected={selected}
         onToggle={onToggle}
         companyColor={companyColor}
-        siblingLeads={siblingLeads}
         onViewSibling={onView}
         fetchedDetails={fetchedDetails}
         extendForViewButton={showViewButton}

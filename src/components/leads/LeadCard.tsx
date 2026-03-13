@@ -32,10 +32,9 @@ function CrmStatusBadge({ lead }: { lead: Lead }) {
 
   const c = config[effectiveStatus] ?? config.PENDING;
 
-  // If we truly have no status info at all, don't show a pill
-  if (!wasChecked && !saved && !lead.isNew && !lead.crmStatus) {
-    return null;
-  }
+  // Don't show badge if no meaningful status (unchecked or just "New")
+  if (!wasChecked && !saved && !lead.crmStatus) return null;
+  if (effectiveStatus === "NEW") return null;
 
   return (
     <span className={cn("text-[10px] px-2 py-0.5 rounded-full border font-medium", c.className)}>
@@ -84,6 +83,12 @@ export interface Lead {
   apifyEnrichmentFetchedAt?: string | null;
   /** Google Maps URL for the place */
   mapUrl?: string;
+  /** Duplicate store group ID (null/undefined if unique) */
+  duplicateStoreGroup?: string;
+  /** Number of leads in the duplicate store group (1 if unique) */
+  duplicateStoreCount?: number;
+  /** Names of other leads in the same duplicate store group */
+  duplicateStoreNames?: string[];
 }
 
 interface LeadCardProps {
@@ -104,7 +109,8 @@ interface LeadCardProps {
 
 export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads, onViewSibling, fetchedDetails, extendForViewButton }: LeadCardProps) => {
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const hasSiblings = siblingLeads && siblingLeads.length > 0;
+  const hasDuplicateStores = (lead.duplicateStoreCount ?? 1) > 1;
+  const hasSiblings = hasDuplicateStores || (siblingLeads && siblingLeads.length > 0);
   return (
     <div
       onClick={() => onToggle(lead.id)}
@@ -150,32 +156,52 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
                     className="text-[10px] px-2 py-0.5 rounded-full border font-medium flex items-center gap-1 bg-blue-500/15 border-blue-500/30 text-blue-600 dark:text-blue-400 hover:bg-blue-500/25 transition-colors"
                   >
                     <Store className="w-2.5 h-2.5" />
-                    {siblingLeads!.length + 1} stores
+                    {hasDuplicateStores ? lead.duplicateStoreCount : (siblingLeads!.length + 1)} stores
                   </button>
                 </PopoverTrigger>
                 <PopoverContent align="start" className="w-80 p-0" onClick={(e) => e.stopPropagation()}>
                   <div className="p-2 border-b border-border">
-                    <p className="text-xs font-semibold text-foreground">Same company — other locations</p>
+                    <p className="text-xs font-semibold text-foreground">Same brand — other locations</p>
                   </div>
                   <div className="max-h-48 overflow-y-auto">
-                    {[lead, ...siblingLeads!].map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onViewSibling?.(s);
-                          setPopoverOpen(false);
-                        }}
-                        className="w-full text-left px-3 py-2.5 hover:bg-accent/50 transition-colors border-b border-border/50 last:border-0"
-                      >
-                        <p className="text-xs font-medium text-foreground truncate">{s.name}</p>
-                        {s.address && (
-                          <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{s.address}</p>
-                        )}
-                        <span className="text-[10px] text-primary font-semibold mt-1 inline-block">View →</span>
-                      </button>
-                    ))}
+                    {hasDuplicateStores ? (
+                      <>
+                        <div className="px-3 py-2.5 border-b border-border/50 bg-primary/5">
+                          <p className="text-xs font-medium text-foreground truncate">{lead.name}</p>
+                          {lead.address && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{lead.address}</p>
+                          )}
+                          <span className="text-[10px] text-primary font-semibold mt-1 inline-block">Current</span>
+                        </div>
+                        {(lead.duplicateStoreNames ?? []).map((name) => (
+                          <div
+                            key={name}
+                            className="px-3 py-2.5 border-b border-border/50 last:border-0"
+                          >
+                            <p className="text-xs font-medium text-foreground truncate">{name}</p>
+                          </div>
+                        ))}
+                      </>
+                    ) : (
+                      [lead, ...siblingLeads!].map((s) => (
+                        <button
+                          key={s.id}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onViewSibling?.(s);
+                            setPopoverOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2.5 hover:bg-accent/50 transition-colors border-b border-border/50 last:border-0"
+                        >
+                          <p className="text-xs font-medium text-foreground truncate">{s.name}</p>
+                          {s.address && (
+                            <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-1">{s.address}</p>
+                          )}
+                          <span className="text-[10px] text-primary font-semibold mt-1 inline-block">View →</span>
+                        </button>
+                      ))
+                    )}
                   </div>
                 </PopoverContent>
               </Popover>
@@ -204,7 +230,7 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
 
       {/* Details */}
       <div className="space-y-1.5">
-        {lead.address && (
+        {lead.address && !/^[\s·]*(?:Open|Closes|Opens)\b/i.test(lead.address) && lead.address.toLowerCase() !== "no address" && (
           <div className="flex items-start gap-2">
             <MapPin className="w-3.5 h-3.5 text-muted-foreground/50 mt-0.5 flex-shrink-0" />
             <span className="text-xs text-muted-foreground leading-tight line-clamp-2 break-words">{lead.address}</span>

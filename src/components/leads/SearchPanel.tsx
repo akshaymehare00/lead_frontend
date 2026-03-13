@@ -21,9 +21,9 @@ const CATEGORIES = [
   "Retailer",
 ];
 
-const LEAD_COUNTS = [10, 20, 30, 50, 100];
-const LEAD_COUNTS_URL = [10, 20, 30, 50, 100, 120];
-const LEAD_COUNTS_CSV = [50, 100, 150, 200, 300, 500];
+const LEAD_COUNTS = [10, 20, 50, 100];
+const LEAD_COUNTS_URL = [10, 20, 50, 100, 120];
+const LEAD_COUNTS_CSV = [10, 20, 50, 100];
 
 function getBestPosition(targetAccuracy = 100, maxWaitMs = 15_000): Promise<GeolocationPosition> {
   return new Promise((resolve, reject) => {
@@ -86,6 +86,14 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   const [leadCount, setLeadCount] = useState(10);
   const [countOpen, setCountOpen] = useState(false);
   const [locating, setLocating] = useState(false);
+
+  const handleSourceChange = (source: SearchSource) => {
+    setSearchSource(source);
+    const counts = source === "url" ? LEAD_COUNTS_URL : source === "csv" ? LEAD_COUNTS_CSV : LEAD_COUNTS;
+    if (!counts.includes(leadCount)) {
+      setLeadCount(counts[0]);
+    }
+  };
 
   const toggleCategory = (cat: string) => {
     setSelectedCategories((prev) =>
@@ -193,7 +201,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
               type="radio"
               name="searchSource"
               checked={searchSource === "serpapi"}
-              onChange={() => setSearchSource("serpapi")}
+              onChange={() => handleSourceChange("serpapi")}
               className="w-4 h-4 text-primary border-border focus:ring-primary"
             />
             <span className="text-sm font-medium">SerpAPI</span>
@@ -203,7 +211,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
               type="radio"
               name="searchSource"
               checked={searchSource === "apify"}
-              onChange={() => setSearchSource("apify")}
+              onChange={() => handleSourceChange("apify")}
               className="w-4 h-4 text-primary border-border focus:ring-primary"
             />
             <span className="text-sm font-medium">Apify</span>
@@ -213,7 +221,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
               type="radio"
               name="searchSource"
               checked={searchSource === "url"}
-              onChange={() => setSearchSource("url")}
+              onChange={() => handleSourceChange("url")}
               className="w-4 h-4 text-primary border-border focus:ring-primary"
             />
             <span className="text-sm font-medium">URL Search</span>
@@ -223,7 +231,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
               type="radio"
               name="searchSource"
               checked={searchSource === "csv"}
-              onChange={() => setSearchSource("csv")}
+              onChange={() => handleSourceChange("csv")}
               className="w-4 h-4 text-primary border-border focus:ring-primary"
             />
             <span className="text-sm font-medium">CSV Search</span>

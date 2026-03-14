@@ -24,7 +24,7 @@ import { api, toLead, type CrmCheckSimilarMatch, type BulkCrmCheckOkItem, type C
 import { cn } from "@/lib/utils";
 import { generateLeadsCsv, generateFullLeadsCsv, downloadCsv } from "@/lib/csv-export";
 
-type ViewMode = "dashboard" | "results" | "crm-check" | "enrichment" | "collect-details" | "leads-total" | "leads-enriched" | "leads-pending";
+type ViewMode = "dashboard" | "results" | "crm-check" | "enrichment" | "leads-total" | "leads-enriched" | "leads-pending";
 
 export interface CrmCheckLead extends Lead {
   crmStatus?: string;
@@ -67,9 +67,6 @@ export default function Index() {
   const [isLoadingEnrichment, setIsLoadingEnrichment] = useState(false);
   const [isFetchingEnrichment, setIsFetchingEnrichment] = useState(false);
   const [fetchedEnrichmentLeadIds, setFetchedEnrichmentLeadIds] = useState<Set<string>>(new Set());
-  const [collectDetailsLeads, setCollectDetailsLeads] = useState<Lead[]>([]);
-  const [collectDetailsSelectedLeads, setCollectDetailsSelectedLeads] = useState<Set<string>>(new Set());
-  const [isLoadingCollectDetails, setIsLoadingCollectDetails] = useState(false);
   const [isLoadingCrmCheck, setIsLoadingCrmCheck] = useState(false);
   const [leadsListData, setLeadsListData] = useState<Lead[]>([]);
   const [leadsListFilter, setLeadsListFilter] = useState<"all" | "enriched" | "pending">("all");
@@ -84,8 +81,6 @@ export default function Index() {
     setEnrichmentLeads([]);
     setEnrichmentSelectedLeads(new Set());
     setFetchedEnrichmentLeadIds(new Set());
-    setCollectDetailsLeads([]);
-    setCollectDetailsSelectedLeads(new Set());
     setMaxStepReached(1);
   }, [activeSessionId]);
 
@@ -156,14 +151,10 @@ export default function Index() {
                   }
         );
 
-        // Derive which workflow steps should be unlocked from backend stages
-        // Backend stages: create_list, crm_check, enrichment, collect_details, saved, duplicate
-        // Frontend steps: 1=Home, 2=Create List, 3=CRM Check, 4=Enrichment List, 5=Final List (collect_details)
         const stages = (session as { stages?: {
           create_list?: { unlocked: boolean };
           crm_check?: { unlocked: boolean };
           enrichment?: { unlocked: boolean };
-          collect_details?: { unlocked: boolean };
           saved?: { unlocked: boolean };
           duplicate?: { unlocked: boolean };
         } }).stages;
@@ -172,7 +163,6 @@ export default function Index() {
         if (stages?.create_list?.unlocked) maxStep = 2;
         if (stages?.crm_check?.unlocked) maxStep = 3;
         if (stages?.enrichment?.unlocked) maxStep = 4;
-        if (stages?.collect_details?.unlocked) maxStep = 5;
 
         // Default view when opening a session is the results (create list) stage if available
         // Don't switch back to dashboard if we're actively searching this session (search in progress)
@@ -380,6 +370,16 @@ export default function Index() {
     toast({ title: "Exported", description: `${ids.length} lead(s) exported as CSV` });
   };
 
+  const handleEnrichmentExport = (leadIds: string[]) => {
+    if (leadIds.length === 0) return;
+    const selectedLeadData = enrichmentLeads
+      .filter((l) => leadIds.includes(l.id))
+      .sort((a, b) => a.rank - b.rank);
+    const csv = generateFullLeadsCsv(selectedLeadData);
+    downloadCsv(csv, "enriched-leads");
+    toast({ title: "Exported", description: `${leadIds.length} lead(s) exported as CSV` });
+  };
+
   const handleClearSelection = () => setSelectedLeads(new Set());
 
   const fetchCrmCheckLeads = useCallback(async () => {
@@ -425,19 +425,6 @@ export default function Index() {
     }
   }, [activeSessionId]);
 
-  const fetchCollectDetailsLeads = useCallback(async () => {
-    if (!activeSessionId) return;
-    setIsLoadingCollectDetails(true);
-    try {
-      const session = await api.sessions.get(activeSessionId, "collect_details");
-      setCollectDetailsLeads(session.leads.map(toLead));
-    } catch {
-      setCollectDetailsLeads([]);
-    } finally {
-      setIsLoadingCollectDetails(false);
-    }
-  }, [activeSessionId]);
-
   const navigateToCrmCheck = () => {
     setViewMode("crm-check");
     setCurrentStep(3);
@@ -470,31 +457,6 @@ export default function Index() {
     }
   };
 
-  const moveToCollectDetails = async (leadIds: string[]) => {
-    if (leadIds.length === 0) return;
-    setEnrichmentSelectedLeads(new Set());
-    try {
-      const res = await api.leads.moveToCollectDetails(leadIds);
-      const total = res.moved + res.skipped;
-      toast({
-        title: "Collect Details",
-        description: total > 0
-          ? `${res.moved} moved${res.skipped > 0 ? `, ${res.skipped} already in final list` : ""}${res.failed > 0 ? `, ${res.failed} failed` : ""}.`
-          : `${res.failed} failed to move.`,
-      });
-      setViewMode("collect-details");
-      setCurrentStep(5);
-      setMaxStepReached((prev) => Math.max(prev, 5));
-      await fetchCollectDetailsLeads();
-    } catch (err) {
-      toast({
-        title: "Move failed",
-        description: err instanceof Error ? err.message : "Failed to move leads to final list",
-        variant: "destructive",
-      });
-    }
-  };
-
   const handleFetchEnrichmentDetails = async (leadIds: string[]) => {
     if (leadIds.length === 0) return;
     const idsToFetch = leadIds.filter((id) => {
@@ -512,24 +474,6 @@ export default function Index() {
     setIsFetchingEnrichment(true);
     try {
       const res = await api.leads.fetchEnrichmentDetails(idsToFetch);
-      const updatedIds = new Set<string>();
-      setEnrichmentLeads((prev) =>
-        prev.map((lead) => {
-          const result = res.results.find((r) => r.leadId === lead.id);
-          if (!result || result.status !== "UPDATED" || !result.fetched) return lead;
-          updatedIds.add(lead.id);
-          return {
-            ...lead,
-            phone: lead.phone || result.fetched.phone,
-            email: lead.email || result.fetched.email,
-            website: lead.website || result.fetched.website,
-            linkedin: lead.linkedin || result.fetched.linkedin,
-            instagram: lead.instagram || result.fetched.instagram,
-            apifyEnrichmentFetchedAt: new Date().toISOString(),
-          };
-        })
-      );
-      setFetchedEnrichmentLeadIds((prev) => new Set([...prev, ...updatedIds]));
       toast({
         title: (
           <span className="flex items-center gap-2">
@@ -539,6 +483,7 @@ export default function Index() {
         ),
         description: `Found details for ${res.updated} lead${res.updated === 1 ? "" : "s"}.${res.skipped > 0 || res.failed > 0 ? ` (${res.skipped} skipped, ${res.failed} failed)` : ""}`,
       });
+      await fetchEnrichmentLeads();
     } catch (err) {
       toast({
         title: "Fetch failed",
@@ -556,39 +501,6 @@ export default function Index() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  };
-
-  const toggleCollectDetailsLead = (id: string) => {
-    setCollectDetailsSelectedLeads((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-
-  const handleExportAndComplete = async (leadIds: string[]) => {
-    if (leadIds.length === 0) return;
-    const selectedLeadsData = collectDetailsLeads.filter((l) => leadIds.includes(l.id));
-    const csv = generateFullLeadsCsv(selectedLeadsData);
-    downloadCsv(csv, "final-list-leads");
-    toast({ title: "Exported", description: `${leadIds.length} lead(s) exported as CSV` });
-    try {
-      await Promise.all(leadIds.map((id) => api.leads.updateStep(id, 8).catch(() => null)));
-      setCollectDetailsLeads((prev) => prev.filter((l) => !leadIds.includes(l.id)));
-      setCollectDetailsSelectedLeads((prev) => {
-        const next = new Set(prev);
-        leadIds.forEach((id) => next.delete(id));
-        return next;
-      });
-      toast({ title: "Complete", description: `${leadIds.length} lead(s) marked as complete` });
-      fetchSessions();
-    } catch {
-      toast({
-        title: "Note",
-        description: "Export succeeded. Some leads may not have been marked complete.",
-        variant: "destructive",
-      });
-    }
   };
 
   const fetchLeadsList = useCallback(async (filter: "all" | "enriched" | "pending") => {
@@ -826,12 +738,6 @@ export default function Index() {
           leadIds.includes(l.id) ? { ...l, isNew: false } : l
         )
       );
-      setCollectDetailsLeads((prev) => prev.filter((l) => !leadIds.includes(l.id)));
-      setCollectDetailsSelectedLeads((prev) => {
-        const next = new Set(prev);
-        leadIds.forEach((id) => next.delete(id));
-        return next;
-      });
       setSessionCrmStats((prev) => ({
         ...prev,
         savedCount: (prev.savedCount ?? 0) + res.saved,
@@ -909,12 +815,6 @@ export default function Index() {
       setLeads((prev) => prev.filter((l) => !idsSet.has(l.id)));
       setCrmCheckLeads((prev) => prev.filter((l) => !idsSet.has(l.id)));
       setEnrichmentLeads((prev) => prev.filter((l) => !idsSet.has(l.id)));
-      setCollectDetailsLeads((prev) => prev.filter((l) => !idsSet.has(l.id)));
-      setCollectDetailsSelectedLeads((prev) => {
-        const next = new Set(prev);
-        leadIds.forEach((id) => next.delete(id));
-        return next;
-      });
       setSelectedLeads((prev) => {
         const next = new Set(prev);
         leadIds.forEach((id) => next.delete(id));
@@ -1035,12 +935,6 @@ export default function Index() {
                   setMaxStepReached((prev) => Math.max(prev, 4));
                   fetchEnrichmentLeads();
                 }
-                else if (stepId === 5) {
-                  setViewMode("collect-details");
-                  setCurrentStep(5);
-                  setMaxStepReached((prev) => Math.max(prev, 5));
-                  fetchCollectDetailsLeads();
-                }
               }}
             />
           </div>
@@ -1082,24 +976,11 @@ export default function Index() {
                 onRemoveLeads={handleRemoveLeads}
                 isRemoving={isRemovingLeads}
                 onBack={() => { setViewMode("crm-check"); setCurrentStep(3); }}
-                onMoveToCollectDetails={moveToCollectDetails}
+                onExportCsv={handleEnrichmentExport}
                 onViewLead={setActiveLead}
                 onFetchMissingDetails={handleFetchEnrichmentDetails}
                 isFetchingEnrichment={isFetchingEnrichment}
                 fetchedEnrichmentLeadIds={fetchedEnrichmentLeadIds}
-              />
-            ) : viewMode === "collect-details" ? (
-              <CollectDetailsView
-                leads={collectDetailsLeads}
-                isLoading={isLoadingCollectDetails}
-                selectedLeads={collectDetailsSelectedLeads}
-                onToggle={toggleCollectDetailsLead}
-                onClearSelection={() => setCollectDetailsSelectedLeads(new Set())}
-                onExportAndComplete={handleExportAndComplete}
-                onRemoveLeads={handleRemoveLeads}
-                isRemoving={isRemovingLeads}
-                onBack={() => { setViewMode("enrichment"); setCurrentStep(4); fetchEnrichmentLeads(); }}
-                onViewLead={setActiveLead}
               />
             ) : viewMode === "crm-check" ? (
               <CrmCheckView
@@ -1764,7 +1645,7 @@ function EnrichmentView({
   onRemoveLeads,
   isRemoving,
   onBack,
-  onMoveToCollectDetails,
+  onExportCsv,
   onViewLead,
   onFetchMissingDetails,
   isFetchingEnrichment,
@@ -1780,7 +1661,7 @@ function EnrichmentView({
   onRemoveLeads: (leadIds: string[]) => void;
   isRemoving?: boolean;
   onBack: () => void;
-  onMoveToCollectDetails: (leadIds: string[]) => void;
+  onExportCsv: (leadIds: string[]) => void;
   onViewLead: (lead: Lead) => void;
   onFetchMissingDetails: (leadIds: string[]) => void;
   isFetchingEnrichment?: boolean;
@@ -1885,6 +1766,16 @@ function EnrichmentView({
             <Button
               variant="outline"
               size="sm"
+              onClick={() => onRemoveLeads(Array.from(selectedLeads))}
+              disabled={isRemoving}
+              className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+            >
+              {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Delete Selected
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => onFetchMissingDetails(Array.from(selectedLeads))}
               disabled={isFetchingEnrichment || selectedLeads.size > 20}
               className="gap-2"
@@ -1895,16 +1786,6 @@ function EnrichmentView({
                 <Zap className="w-3.5 h-3.5" />
               )}
               Fetch Missing Details
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRemoveLeads(Array.from(selectedLeads))}
-              disabled={isRemoving}
-              className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-            >
-              {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Delete Selected
             </Button>
             {(() => {
               const selectedNew = leads.filter(
@@ -1922,145 +1803,9 @@ function EnrichmentView({
                 </Button>
               ) : null;
             })()}
-            <Button size="sm" onClick={() => onMoveToCollectDetails(Array.from(selectedLeads))} className="gap-2">
-              <ChevronRight className="w-3.5 h-3.5" />
-              Collect Details ({selectedLeads.size})
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─── Collect Details / Final List View ─── */
-function CollectDetailsView({
-  leads,
-  isLoading: isLoadingStage,
-  selectedLeads,
-  onToggle,
-  onClearSelection,
-  onExportAndComplete,
-  onRemoveLeads,
-  isRemoving,
-  onBack,
-  onViewLead,
-}: {
-  leads: Lead[];
-  isLoading?: boolean;
-  selectedLeads: Set<string>;
-  onToggle: (id: string) => void;
-  onClearSelection: () => void;
-  onExportAndComplete: (leadIds: string[]) => void;
-  onRemoveLeads: (leadIds: string[]) => void;
-  isRemoving?: boolean;
-  onBack: () => void;
-  onViewLead: (lead: Lead) => void;
-}) {
-  if (isLoadingStage) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-        <Loader2 className="w-10 h-10 text-primary animate-spin mb-3" />
-        <p className="text-sm font-medium text-foreground">Loading final list...</p>
-      </div>
-    );
-  }
-
-  if (leads.length === 0) {
-    return (
-      <div className="p-8 flex flex-col items-center justify-center h-full text-center">
-        <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-4">
-          <FileCheck className="w-8 h-8 text-primary" />
-        </div>
-        <h2 className="text-xl font-semibold text-foreground mb-2">No leads in final list</h2>
-        <p className="text-muted-foreground max-w-sm mb-6">
-          Move leads from Enrichment to export and mark as complete.
-        </p>
-        <Button variant="outline" onClick={onBack} className="gap-2">
-          <ArrowLeft className="w-4 h-4" />
-          Back to Enrichment
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="p-6 max-w-5xl mx-auto animate-slide-up">
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={onBack} className="gap-2">
-            <ArrowLeft className="w-4 h-4" />
-            Back
-          </Button>
-          <FileCheck className="w-5 h-5 text-primary" />
-          <div>
-            <h1 className="text-lg font-semibold">Final List</h1>
-            <p className="text-xs text-muted-foreground">
-              {leads.length} leads ready to export
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          {selectedLeads.size > 0 && (
-            <>
-              <span className="text-xs text-muted-foreground">{selectedLeads.size} selected</span>
-              <button
-                type="button"
-                onClick={onClearSelection}
-                className="text-xs text-destructive hover:underline font-semibold"
-              >
-                Deselect All
-              </button>
-            </>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              onClearSelection();
-              leads.forEach((l) => onToggle(l.id));
-            }}
-            className="text-xs text-primary hover:underline font-semibold"
-          >
-            Select All
-          </button>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
-        {leads.map((lead) => (
-          <ClickableLeadCard
-            key={lead.id}
-            lead={lead}
-            selected={selectedLeads.has(lead.id)}
-            onToggle={onToggle}
-            onView={onViewLead}
-          />
-        ))}
-      </div>
-
-      {selectedLeads.size > 0 && (
-        <div className="sticky bottom-4 mt-6 flex items-center justify-between px-5 py-3.5 rounded-xl bg-card border border-primary/25 shadow-lg animate-slide-up z-20">
-          <p className="text-sm font-medium text-foreground">
-            <span className="text-primary font-bold">{selectedLeads.size}</span> selected
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRemoveLeads(Array.from(selectedLeads))}
-              disabled={isRemoving}
-              className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-            >
-              {isRemoving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-              Delete Selected
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => onExportAndComplete(Array.from(selectedLeads))}
-              className="gap-2 bg-primary"
-            >
+            <Button size="sm" onClick={() => onExportCsv(Array.from(selectedLeads))} className="gap-2">
               <Download className="w-3.5 h-3.5" />
-              Export to CSV ({selectedLeads.size})
+              Export CSV ({selectedLeads.size})
             </Button>
           </div>
         </div>

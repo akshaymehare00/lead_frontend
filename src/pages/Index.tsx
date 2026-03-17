@@ -1055,16 +1055,24 @@ export default function Index() {
   );
 }
 
-/** Normalize category for filter: Jeweler + Jewelery Store + Jewelry Store → Jewellery */
+/** Normalize category labels for filter chips (fix common spellings). */
 function normalizeCategoryForFilter(category: string): string {
-  const c = (category ?? "").toLowerCase().trim();
-  if (["jeweler", "jewelery store", "jewelry store", "jewellery store"].includes(c)) {
-    return "Jewellery";
-  }
-  return category?.trim() || "";
+  const raw = (category ?? "").trim();
+  if (!raw) return "";
+
+  const c = raw.toLowerCase().trim();
+
+  // Keep categories separate (so "Jewelry Store" and "Jewelry Manufacturer" show as chips),
+  // but normalize misspellings/variants to consistent labels.
+  if (c === "jewelery store" || c === "jewellery store" || c === "jewelry store") return "Jewelry Store";
+  if (c === "jeweler" || c === "jeweller") return "Jeweler";
+  if (c === "jewelery manufacturer" || c === "jewellery manufacturer" || c === "jewelry manufacturer")
+    return "Jewelry Manufacturer";
+
+  return raw;
 }
 
-/** Check if lead matches category filter (Jewelery Store matches Jeweler + Jewelery Store) */
+/** Check if lead matches category filter (normalized labels). */
 function matchesCategoryFilter(lead: Lead, filterLabel: string): boolean {
   const leadNorm = normalizeCategoryForFilter(lead.category ?? "");
   const filterNorm = normalizeCategoryForFilter(filterLabel);

@@ -161,81 +161,186 @@ export function formatHoursWithIST(hours: string, address: string): string {
  *   → "Mon–Sat: 10:00 am - 7:30 pm IST; Sun: Closed"   (grouped)
  */
 
+/**
+ * formatHours utility
+ * -------------------
+ * Handles TWO formats that can appear in lead.hours:
+ *
+ * Format A — Raw Google Maps snippet (unenriched lead):
+ *   "· Closes 4:30 pm"   → "Closes 4:30 PM"
+ *
+ * Format B — Full IST enriched string (after Apify enrichment):
+ *   "Mon: 10:00 am - 7:30 pm IST; Tue: ..."
+ *   → grouped + optionally converted to any timezone
+ */
+
 const DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// ─────────────────────────────────────────────
+// TIMEZONE DEFINITIONS
+// Add more as needed
+// ─────────────────────────────────────────────
+export interface TimezoneOption {
+  label: string;       // shown in UI dropdown
+  iana: string;        // IANA timezone string
+  abbrev: string;      // short label shown after time
+}
+
+export const TIMEZONE_OPTIONS: TimezoneOption[] = [
+  { label: "IST — India",              iana: "Asia/Kolkata",        abbrev: "IST"  },
+  { label: "UTC — Universal",          iana: "UTC",                 abbrev: "UTC"  },
+  { label: "EST — New York (US East)", iana: "America/New_York",    abbrev: "EST"  },
+  { label: "PST — Los Angeles (US West)", iana: "America/Los_Angeles", abbrev: "PST" },
+  { label: "CST — Chicago",            iana: "America/Chicago",     abbrev: "CST"  },
+  { label: "GMT — London",             iana: "Europe/London",       abbrev: "GMT"  },
+  { label: "CET — Paris / Dubai",      iana: "Europe/Paris",        abbrev: "CET"  },
+  { label: "GST — Dubai",              iana: "Asia/Dubai",          abbrev: "GST"  },
+  { label: "SGT — Singapore",          iana: "Asia/Singapore",      abbrev: "SGT"  },
+  { label: "HKT — Hong Kong",          iana: "Asia/Hong_Kong",      abbrev: "HKT"  },
+  { label: "JST — Tokyo",              iana: "Asia/Tokyo",          abbrev: "JST"  },
+  { label: "AEST — Sydney",            iana: "Australia/Sydney",    abbrev: "AEST" },
+];
+
+const IST_IANA = "Asia/Kolkata";
 
 // ─────────────────────────────────────────────
 // FORMAT A — Raw Google Maps snippet handling
 // ─────────────────────────────────────────────
 
-/** Format h, m, ampm into "4:30 PM" */
 function formatTimeToken(h: string, m: string, ampm: string): string {
-  const min = m.padStart(2, "0");
-  return `${h}:${min} ${ampm.toUpperCase()}`;
+  return `${h}:${m.padStart(2, "0")} ${ampm.toUpperCase()}`;
 }
 
-/**
- * Detects raw Google Maps hour snippets and formats them cleanly.
- * Returns null if the string is NOT a raw snippet (i.e. already fully formatted).
- *
- * Examples:
- *   "· Closes 4:30 pm"  → "Closes 4:30 PM"
- *   "· Open 24 hours"   → "Open 24 hours"
- *   "· Closed"          → "Closed today"
- *   "Mon: 10:00 am IST" → null  (not a raw snippet, let Format B handle it)
- */
 function formatRawGoogleHours(hours: string): string | null {
-  // Strip leading bullet/dot characters Google Maps adds
   const cleaned = hours.replace(/^[\s·•\-–]+/, "").trim();
-
-  // Already fully formatted — contains proper "Mon:", "Tue:" etc day prefixes
   const hasProperDay = DAY_ORDER.some((d) =>
     cleaned.toLowerCase().startsWith(d.toLowerCase() + ":")
   );
   if (hasProperDay) return null;
-
-  // "Closed" or "Closed today"
   if (/^closed$/i.test(cleaned)) return "Closed today";
-
-  // "Open 24 hours"
   if (/open\s+24\s+hours/i.test(cleaned)) return "Open 24 hours";
-
-  // "Open now"
   if (/^open\s+now$/i.test(cleaned)) return "Open now";
-
-  // "Closes soon"
   if (/^closes\s+soon$/i.test(cleaned)) return "Closes soon";
-
-  // "Closes 4:30 pm" or "Closes 4 pm"
   const closesMatch = cleaned.match(/closes?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
-  if (closesMatch) {
-    const time = formatTimeToken(closesMatch[1], closesMatch[2] ?? "00", closesMatch[3]);
-    return `Closes ${time}`;
-  }
-
-  // "Opens 9:00 am" or "Opens at 9 am"
+  if (closesMatch) return `Closes ${formatTimeToken(closesMatch[1], closesMatch[2] ?? "00", closesMatch[3])}`;
   const opensMatch = cleaned.match(/opens?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
-  if (opensMatch) {
-    const time = formatTimeToken(opensMatch[1], opensMatch[2] ?? "00", opensMatch[3]);
-    return `Opens ${time}`;
-  }
-
-  // Unknown raw format — return cleaned (at least strip the bullet)
+  if (opensMatch) return `Opens ${formatTimeToken(opensMatch[1], opensMatch[2] ?? "00", opensMatch[3])}`;
   return cleaned || null;
 }
 
 // ─────────────────────────────────────────────
-// FORMAT B — Full IST enriched string grouping
+// FORMAT B — IST time conversion
 // ─────────────────────────────────────────────
 
 interface DayEntry {
-  day: string;   // "Mon", "Tue", etc.
-  hours: string; // "10:00 am - 7:30 pm IST" or "Closed"
+  day: string;
+  hours: string;
 }
 
 /**
- * Parse "Mon: 10:00 am - 7:30 pm IST; Tue: ..." into [{ day, hours }].
- * Skips any segment whose prefix is not a valid 3-letter day abbrev.
+ * Parse a single time string like "10:00 am" or "7:30 PM" into { hour, minute }.
+ * Returns null if unparseable.
  */
+function parseTimeStr(t: string): { hour: number; minute: number } | null {
+  const m = t.trim().match(/(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (!m) return null;
+  let hour = parseInt(m[1], 10);
+  const minute = parseInt(m[2], 10);
+  const ampm = m[3].toLowerCase();
+  if (ampm === "pm" && hour !== 12) hour += 12;
+  if (ampm === "am" && hour === 12) hour = 0;
+  return { hour, minute };
+}
+
+/**
+ * Convert a single IST time "10:00 am" → target timezone formatted string.
+ * Uses the browser's built-in Intl API — no external library needed.
+ */
+function convertISTTime(timeStr: string, targetIana: string, targetAbbrev: string): string {
+  if (timeStr.toLowerCase() === "closed") return "Closed";
+
+  const parsed = parseTimeStr(timeStr);
+  if (!parsed) return timeStr;
+
+  // Build a Date in IST using a fixed reference date (today's date doesn't matter for time conversion)
+  const refDate = new Date();
+  refDate.setFullYear(2024, 0, 1); // Jan 1 2024 — stable reference
+
+  // Format as IST time string, then parse back
+  const istFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: IST_IANA,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+
+  // Create a UTC date that represents the given IST time
+  const istOffset = getTimezoneOffsetMinutes(IST_IANA); // +330 for IST
+  const utcMs = Date.UTC(2024, 0, 1, parsed.hour, parsed.minute, 0) - istOffset * 60000;
+  const utcDate = new Date(utcMs);
+
+  // Format in target timezone
+  const targetFormatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: targetIana,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+
+  const converted = targetFormatter.format(utcDate);
+  return `${converted} ${targetAbbrev}`;
+}
+
+/**
+ * Get timezone offset in minutes from UTC for a given IANA timezone.
+ * e.g. Asia/Kolkata → 330 (UTC+5:30)
+ */
+function getTimezoneOffsetMinutes(iana: string): number {
+  const ref = new Date(Date.UTC(2024, 0, 1, 0, 0, 0));
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: iana,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  }).formatToParts(ref);
+
+  const get = (type: string) =>
+    parseInt(parts.find((p) => p.type === type)?.value ?? "0", 10);
+
+  const localHour = get("hour") === 24 ? 0 : get("hour");
+  const localMin = get("minute");
+  const localDay = get("day");
+
+  // Minutes from midnight in local time
+  const localMinutes = localDay === 1
+    ? localHour * 60 + localMin
+    : localHour * 60 + localMin + (localDay === 31 ? -24 * 60 : 24 * 60); // handle day boundary
+
+  return localMinutes; // this IS the offset from UTC
+}
+
+/**
+ * Convert a full hours value string like "10:00 am - 7:30 pm IST"
+ * to target timezone: "11:30 PM UTC - 2:00 PM UTC" (example)
+ */
+function convertHoursValue(hoursValue: string, targetIana: string, targetAbbrev: string): string {
+  // "Closed" days
+  if (/^closed$/i.test(hoursValue.trim())) return "Closed";
+
+  // Strip existing timezone suffix (IST, UTC, etc.)
+  const stripped = hoursValue.replace(/\s+[A-Z]{2,5}$/, "").trim();
+
+  // Match "10:00 am - 7:30 pm" pattern
+  const rangeMatch = stripped.match(
+    /(\d{1,2}:\d{2}\s*(?:am|pm))\s*[-–]\s*(\d{1,2}:\d{2}\s*(?:am|pm))/i
+  );
+  if (!rangeMatch) return hoursValue; // can't parse — return as-is
+
+  const openConverted = convertISTTime(rangeMatch[1].trim(), targetIana, targetAbbrev);
+  const closeConverted = convertISTTime(rangeMatch[2].trim(), targetIana, targetAbbrev);
+  return `${openConverted} - ${closeConverted}`;
+}
+
 function parseHoursString(hours: string): DayEntry[] {
   return hours
     .split(";")
@@ -247,32 +352,23 @@ function parseHoursString(hours: string): DayEntry[] {
       const rawDay = segment.slice(0, colonIdx).trim();
       const hoursVal = segment.slice(colonIdx + 1).trim();
       const dayPrefix = rawDay.slice(0, 3).toLowerCase();
-      // Only accept valid day abbreviations — rejects "Closes:", "Open:", etc.
       if (!DAY_ORDER.map((d) => d.toLowerCase()).includes(dayPrefix)) return null;
       return { day: rawDay.slice(0, 3), hours: hoursVal };
     })
     .filter((e): e is DayEntry => e !== null);
 }
 
-/**
- * Group consecutive days that share the same hours into ranges.
- *   [Mon 10-7, Tue 10-7, Wed 10-7] → "Mon–Wed: 10:00 am - 7:30 pm IST"
- */
 function groupConsecutiveDays(entries: DayEntry[]): { label: string; hours: string }[] {
   if (entries.length === 0) return [];
-
   const sorted = [...entries].sort(
     (a, b) => DAY_ORDER.indexOf(a.day) - DAY_ORDER.indexOf(b.day)
   );
-
   const groups: { start: string; end: string; hours: string }[] = [];
   let current = { start: sorted[0].day, end: sorted[0].day, hours: sorted[0].hours };
-
   for (let i = 1; i < sorted.length; i++) {
     const entry = sorted[i];
     const prevIdx = DAY_ORDER.indexOf(current.end);
     const currIdx = DAY_ORDER.indexOf(entry.day);
-
     if (entry.hours === current.hours && currIdx === prevIdx + 1) {
       current.end = entry.day;
     } else {
@@ -281,7 +377,6 @@ function groupConsecutiveDays(entries: DayEntry[]): { label: string; hours: stri
     }
   }
   groups.push({ ...current });
-
   return groups.map((g) => ({
     label: g.start === g.end ? g.start : `${g.start}–${g.end}`,
     hours: g.hours,
@@ -295,36 +390,44 @@ function groupConsecutiveDays(entries: DayEntry[]): { label: string; hours: stri
 /**
  * Primary function — use this in your <ContactField> for hours.
  *
- * Automatically detects which format the string is in and handles it:
- *   - Raw Google Maps snippet → cleaned human-readable string
- *   - Full IST enriched string → grouped by day ranges
+ * @param hours       lead.hours from DB (either raw or full IST format)
+ * @param address     kept for API compatibility
+ * @param targetIana  IANA timezone to convert to (default: "Asia/Kolkata" = IST, no conversion)
+ * @param targetAbbrev Short label shown after time e.g. "UTC", "EST"
  *
- * @param hours    lead.hours from DB (either format)
- * @param address  kept for API compatibility with formatHoursWithIST
+ * Usage:
+ *   formatHoursWithISTGrouped(lead.hours, lead.address)
+ *   formatHoursWithISTGrouped(lead.hours, lead.address, "UTC", "UTC")
+ *   formatHoursWithISTGrouped(lead.hours, lead.address, "America/New_York", "EST")
  */
-export function formatHoursWithISTGrouped(hours: string, address: string): string {
+export function formatHoursWithISTGrouped(
+  hours: string,
+  address: string,
+  targetIana: string = IST_IANA,
+  targetAbbrev: string = "IST"
+): string {
   if (!hours?.trim()) return "—";
 
-  // Try Format A first — raw Google Maps snippet
+  // Format A — raw Google Maps snippet, no conversion possible
   const raw = formatRawGoogleHours(hours);
   if (raw !== null) return raw;
 
-  // Format B — full enriched "Mon: ... IST" string → group consecutive days
+  // Format B — full enriched string
   const entries = parseHoursString(hours);
   if (entries.length === 0) return hours.replace(/^[\s·•\-–]+/, "").trim();
 
-  const groups = groupConsecutiveDays(entries);
+  // Convert each entry's hours to target timezone if needed
+  const converted: DayEntry[] = targetIana === IST_IANA
+    ? entries  // no conversion needed, already IST
+    : entries.map((e) => ({
+        day: e.day,
+        hours: convertHoursValue(e.hours, targetIana, targetAbbrev),
+      }));
+
+  const groups = groupConsecutiveDays(converted);
   return groups.map((g) => `${g.label}: ${g.hours}`).join("; ");
 }
 
-/**
- * Standalone grouping only (no raw snippet detection).
- * Use when you know the string is already in full IST format.
- */
 export function formatHoursGrouped(hours: string): string {
-  if (!hours?.trim()) return hours;
-  const entries = parseHoursString(hours);
-  if (entries.length === 0) return hours;
-  const groups = groupConsecutiveDays(entries);
-  return groups.map((g) => `${g.label}: ${g.hours}`).join("; ");
+  return formatHoursWithISTGrouped(hours, "");
 }

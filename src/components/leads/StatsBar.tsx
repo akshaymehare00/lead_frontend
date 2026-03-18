@@ -5,9 +5,9 @@ import { cn } from "@/lib/utils";
 
 const STAT_CONFIG = [
   { key: "totalLeads" as const, label: "Total Leads", icon: Users, color: "text-primary", clickable: true },
-  { key: "savedThisWeek" as const, label: "Saved This Week", icon: TrendingUp, color: "text-success", clickable: false },
+  // { key: "savedThisWeek" as const, label: "Saved This Week", icon: TrendingUp, color: "text-success", clickable: false },
   { key: "enriched" as const, label: "Enriched", icon: CheckCircle, color: "text-warning", clickable: true },
-  { key: "pendingReview" as const, label: "Pending Review", icon: Clock, color: "text-destructive", clickable: true },
+  { key: "pendingReview" as const, label: "Not Enriched", icon: Clock, color: "text-destructive", clickable: true },
 ];
 
 export const StatsBar = ({ onStatClick }: { onStatClick?: (key: "totalLeads" | "enriched" | "pendingReview") => void }) => {

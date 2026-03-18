@@ -6,10 +6,9 @@ import {
 import { Lead } from "./LeadCard";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { formatHoursWithIST, formatHoursWithISTGrouped } from "@/lib/hours-to-ist";
+import { formatHoursWithIST, formatHoursWithISTGrouped, TIMEZONE_OPTIONS  } from "@/lib/hours-to-ist";
 
 import { LinkedinLogo, InstagramLogo } from "./BrandLogos";
-
 const ENRICHMENT_SOURCE_MAP: Record<string, { icon: React.ElementType; label: string }> = {
   WEBSITE: { icon: Globe, label: "Company Website" },
   LINKEDIN: { icon: LinkedinLogo, label: "LinkedIn" },
@@ -27,6 +26,7 @@ interface LeadDetailPanelProps {
 }
 
 export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSkipLead, onRemoveLead }: LeadDetailPanelProps) => {
+  const [selectedTz, setSelectedTz] = useState(TIMEZONE_OPTIONS[0]);
   const [fullLead, setFullLead] = useState<{
     email?: string | null;
     linkedin?: string | null;
@@ -138,7 +138,35 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
               <ContactField icon={MapPin} label="Address" value={lead.address} filled={!!lead.address} />
               <ContactField icon={Phone} label="Phone" value={lead.phone ?? "—"} filled={!!lead.phone} />
               <ContactField icon={Mail} label="Email" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} />
-              <ContactField icon={Clock} label="Hours" value={lead.hours ? formatHoursWithISTGrouped(lead.hours, lead.address ?? "") : "—"} filled={!!lead.hours} />
+              {/* ← REPLACE old Hours ContactField with this block */}
+    <div className="flex items-start gap-3">
+      <ContactField
+        icon={Clock}
+        label="Hours"
+        value={lead.hours
+          ? formatHoursWithISTGrouped(lead.hours, lead.address ?? "", selectedTz.iana, selectedTz.abbrev)
+          : "—"
+        }
+        filled={!!lead.hours}
+      />
+      {/* Timezone dropdown — only show when hours exist */}
+      {lead.hours && (
+        <select
+          value={selectedTz.iana}
+          onChange={(e) => {
+            const tz = TIMEZONE_OPTIONS.find((t) => t.iana === e.target.value)!;
+            setSelectedTz(tz);
+          }}
+          className="mt-0.5 text-xs border border-border rounded-md px-2 py-1 bg-background text-muted-foreground cursor-pointer hover:border-primary focus:outline-none focus:ring-1 focus:ring-primary shrink-0"
+        >
+          {TIMEZONE_OPTIONS.map((tz) => (
+            <option key={tz.iana} value={tz.iana}>
+              {tz.abbrev}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
             </div>
           </div>
 

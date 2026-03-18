@@ -11,7 +11,7 @@ export type SearchParams =
   | { mode: "apify_url"; googleMapsUrl: string; maxLead: number }
   | { mode: "csv_import"; file: File; maxLead: number; title?: string };
 
-const LEAD_COUNTS_CSV = [10, 20, 50, 100];
+const LEAD_COUNTS_CSV = [10, 20, 50, 100, 200, 500];
 
 interface SearchPanelProps {
   onSearch: (params: SearchParams) => void;
@@ -23,7 +23,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [leadCount, setLeadCount] = useState(10);
+  const [leadCount, setLeadCount] = useState(100);
   const [countOpen, setCountOpen] = useState(false);
 
   const handleSearch = () => {

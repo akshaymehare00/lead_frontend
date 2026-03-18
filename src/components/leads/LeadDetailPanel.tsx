@@ -6,7 +6,8 @@ import {
 import { Lead } from "./LeadCard";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { formatHoursWithIST } from "@/lib/hours-to-ist";
+import { formatHoursWithIST, formatHoursWithISTGrouped } from "@/lib/hours-to-ist";
+
 import { LinkedinLogo, InstagramLogo } from "./BrandLogos";
 
 const ENRICHMENT_SOURCE_MAP: Record<string, { icon: React.ElementType; label: string }> = {
@@ -137,7 +138,7 @@ export const LeadDetailPanel = ({ lead, onClose, onLeadUpdated, onSaveLead, onSk
               <ContactField icon={MapPin} label="Address" value={lead.address} filled={!!lead.address} />
               <ContactField icon={Phone} label="Phone" value={lead.phone ?? "—"} filled={!!lead.phone} />
               <ContactField icon={Mail} label="Email" value={fullLead?.email ?? lead.email ?? "—"} filled={!!(fullLead?.email || lead.email)} />
-              <ContactField icon={Clock} label="Hours" value={lead.hours ? formatHoursWithIST(lead.hours, lead.address ?? "") : "—"} filled={!!lead.hours} />
+              <ContactField icon={Clock} label="Hours" value={lead.hours ? formatHoursWithISTGrouped(lead.hours, lead.address ?? "") : "—"} filled={!!lead.hours} />
             </div>
           </div>
 

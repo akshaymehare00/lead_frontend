@@ -143,3 +143,188 @@ export function formatHoursWithIST(hours: string, address: string): string {
   }
   return result;
 }
+
+
+/**
+ * formatHours utility
+ * -------------------
+ * Handles TWO formats that can appear in lead.hours:
+ *
+ * Format A — Raw Google Maps snippet (unenriched lead, Apify not run yet):
+ *   "· Closes 4:30 pm"   → "Closes 4:30 PM"
+ *   "· Opens 9 am"       → "Opens 9:00 AM"
+ *   "· Open 24 hours"    → "Open 24 hours"
+ *   "· Closed"           → "Closed today"
+ *
+ * Format B — Full IST enriched string (after Apify enrichment):
+ *   "Mon: 10:00 am - 7:30 pm IST; Tue: 10:00 am - 7:30 pm IST; ..."
+ *   → "Mon–Sat: 10:00 am - 7:30 pm IST; Sun: Closed"   (grouped)
+ */
+
+const DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+// ─────────────────────────────────────────────
+// FORMAT A — Raw Google Maps snippet handling
+// ─────────────────────────────────────────────
+
+/** Format h, m, ampm into "4:30 PM" */
+function formatTimeToken(h: string, m: string, ampm: string): string {
+  const min = m.padStart(2, "0");
+  return `${h}:${min} ${ampm.toUpperCase()}`;
+}
+
+/**
+ * Detects raw Google Maps hour snippets and formats them cleanly.
+ * Returns null if the string is NOT a raw snippet (i.e. already fully formatted).
+ *
+ * Examples:
+ *   "· Closes 4:30 pm"  → "Closes 4:30 PM"
+ *   "· Open 24 hours"   → "Open 24 hours"
+ *   "· Closed"          → "Closed today"
+ *   "Mon: 10:00 am IST" → null  (not a raw snippet, let Format B handle it)
+ */
+function formatRawGoogleHours(hours: string): string | null {
+  // Strip leading bullet/dot characters Google Maps adds
+  const cleaned = hours.replace(/^[\s·•\-–]+/, "").trim();
+
+  // Already fully formatted — contains proper "Mon:", "Tue:" etc day prefixes
+  const hasProperDay = DAY_ORDER.some((d) =>
+    cleaned.toLowerCase().startsWith(d.toLowerCase() + ":")
+  );
+  if (hasProperDay) return null;
+
+  // "Closed" or "Closed today"
+  if (/^closed$/i.test(cleaned)) return "Closed today";
+
+  // "Open 24 hours"
+  if (/open\s+24\s+hours/i.test(cleaned)) return "Open 24 hours";
+
+  // "Open now"
+  if (/^open\s+now$/i.test(cleaned)) return "Open now";
+
+  // "Closes soon"
+  if (/^closes\s+soon$/i.test(cleaned)) return "Closes soon";
+
+  // "Closes 4:30 pm" or "Closes 4 pm"
+  const closesMatch = cleaned.match(/closes?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (closesMatch) {
+    const time = formatTimeToken(closesMatch[1], closesMatch[2] ?? "00", closesMatch[3]);
+    return `Closes ${time}`;
+  }
+
+  // "Opens 9:00 am" or "Opens at 9 am"
+  const opensMatch = cleaned.match(/opens?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (opensMatch) {
+    const time = formatTimeToken(opensMatch[1], opensMatch[2] ?? "00", opensMatch[3]);
+    return `Opens ${time}`;
+  }
+
+  // Unknown raw format — return cleaned (at least strip the bullet)
+  return cleaned || null;
+}
+
+// ─────────────────────────────────────────────
+// FORMAT B — Full IST enriched string grouping
+// ─────────────────────────────────────────────
+
+interface DayEntry {
+  day: string;   // "Mon", "Tue", etc.
+  hours: string; // "10:00 am - 7:30 pm IST" or "Closed"
+}
+
+/**
+ * Parse "Mon: 10:00 am - 7:30 pm IST; Tue: ..." into [{ day, hours }].
+ * Skips any segment whose prefix is not a valid 3-letter day abbrev.
+ */
+function parseHoursString(hours: string): DayEntry[] {
+  return hours
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((segment) => {
+      const colonIdx = segment.indexOf(":");
+      if (colonIdx === -1) return null;
+      const rawDay = segment.slice(0, colonIdx).trim();
+      const hoursVal = segment.slice(colonIdx + 1).trim();
+      const dayPrefix = rawDay.slice(0, 3).toLowerCase();
+      // Only accept valid day abbreviations — rejects "Closes:", "Open:", etc.
+      if (!DAY_ORDER.map((d) => d.toLowerCase()).includes(dayPrefix)) return null;
+      return { day: rawDay.slice(0, 3), hours: hoursVal };
+    })
+    .filter((e): e is DayEntry => e !== null);
+}
+
+/**
+ * Group consecutive days that share the same hours into ranges.
+ *   [Mon 10-7, Tue 10-7, Wed 10-7] → "Mon–Wed: 10:00 am - 7:30 pm IST"
+ */
+function groupConsecutiveDays(entries: DayEntry[]): { label: string; hours: string }[] {
+  if (entries.length === 0) return [];
+
+  const sorted = [...entries].sort(
+    (a, b) => DAY_ORDER.indexOf(a.day) - DAY_ORDER.indexOf(b.day)
+  );
+
+  const groups: { start: string; end: string; hours: string }[] = [];
+  let current = { start: sorted[0].day, end: sorted[0].day, hours: sorted[0].hours };
+
+  for (let i = 1; i < sorted.length; i++) {
+    const entry = sorted[i];
+    const prevIdx = DAY_ORDER.indexOf(current.end);
+    const currIdx = DAY_ORDER.indexOf(entry.day);
+
+    if (entry.hours === current.hours && currIdx === prevIdx + 1) {
+      current.end = entry.day;
+    } else {
+      groups.push({ ...current });
+      current = { start: entry.day, end: entry.day, hours: entry.hours };
+    }
+  }
+  groups.push({ ...current });
+
+  return groups.map((g) => ({
+    label: g.start === g.end ? g.start : `${g.start}–${g.end}`,
+    hours: g.hours,
+  }));
+}
+
+// ─────────────────────────────────────────────
+// MAIN EXPORTS
+// ─────────────────────────────────────────────
+
+/**
+ * Primary function — use this in your <ContactField> for hours.
+ *
+ * Automatically detects which format the string is in and handles it:
+ *   - Raw Google Maps snippet → cleaned human-readable string
+ *   - Full IST enriched string → grouped by day ranges
+ *
+ * @param hours    lead.hours from DB (either format)
+ * @param address  kept for API compatibility with formatHoursWithIST
+ */
+export function formatHoursWithISTGrouped(hours: string, address: string): string {
+  if (!hours?.trim()) return "—";
+
+  // Try Format A first — raw Google Maps snippet
+  const raw = formatRawGoogleHours(hours);
+  if (raw !== null) return raw;
+
+  // Format B — full enriched "Mon: ... IST" string → group consecutive days
+  const entries = parseHoursString(hours);
+  if (entries.length === 0) return hours.replace(/^[\s·•\-–]+/, "").trim();
+
+  const groups = groupConsecutiveDays(entries);
+  return groups.map((g) => `${g.label}: ${g.hours}`).join("; ");
+}
+
+/**
+ * Standalone grouping only (no raw snippet detection).
+ * Use when you know the string is already in full IST format.
+ */
+export function formatHoursGrouped(hours: string): string {
+  if (!hours?.trim()) return hours;
+  const entries = parseHoursString(hours);
+  if (entries.length === 0) return hours;
+  const groups = groupConsecutiveDays(entries);
+  return groups.map((g) => `${g.label}: ${g.hours}`).join("; ");
+}

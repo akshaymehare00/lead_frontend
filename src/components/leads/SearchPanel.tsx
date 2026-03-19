@@ -11,7 +11,8 @@ export type SearchParams =
   | { mode: "apify_url"; googleMapsUrl: string; maxLead: number }
   | { mode: "csv_import"; file: File; maxLead: number; title?: string };
 
-const LEAD_COUNTS_CSV = [10, 20, 50, 100, 200, 500];
+const LEAD_COUNTS_CSV = [10, 20, 50, 100, "max"] as const;
+type CsvLeadCountOption = (typeof LEAD_COUNTS_CSV)[number];
 
 interface SearchPanelProps {
   onSearch: (params: SearchParams) => void;
@@ -23,12 +24,12 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [leadCount, setLeadCount] = useState(100);
+  const [leadCount, setLeadCount] = useState<CsvLeadCountOption>(100);
   const [countOpen, setCountOpen] = useState(false);
 
   const handleSearch = () => {
     if (!csvFile) return;
-    onSearch({ mode: "csv_import", file: csvFile, maxLead: leadCount });
+    onSearch({ mode: "csv_import", file: csvFile, maxLead: leadCount === "max" ? 999999 : leadCount });
   };
 
   const canSearch = !!csvFile;
@@ -136,7 +137,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
             onClick={() => setCountOpen(!countOpen)}
             className="w-full flex items-center justify-between bg-secondary/50 border border-border rounded-lg px-4 py-2.5 text-sm text-foreground transition-all hover:border-primary/30"
           >
-            <span className="font-medium">{leadCount} Leads</span>
+            <span className="font-medium">{leadCount === "max" ? "Max" : `${leadCount}`} Leads</span>
             <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform", countOpen && "rotate-180")} />
           </button>
           {countOpen && (
@@ -152,7 +153,7 @@ export const SearchPanel = ({ onSearch, isSearching, compact }: SearchPanelProps
                       : "text-foreground hover:bg-secondary"
                   )}
                 >
-                  {c} Leads
+                  {c === "max" ? "Max" : `${c} Leads`}
                 </button>
               ))}
             </div>

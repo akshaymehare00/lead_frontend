@@ -347,7 +347,6 @@ export default function Index() {
         savedCount: (prev.savedCount ?? 0) + res.saved,
       }));
       const savedIds = res.results.map((r) => r.leadId);
-      setLeadsCrmProcessed((prev) => new Set([...prev, ...savedIds]));
       setMaxStepReached((prev) => Math.max(prev, 3));
       toast({ title: "Saved", description: `${res.saved} lead(s) saved to CRM` });
     } catch (err) {
@@ -475,12 +474,7 @@ export default function Index() {
     try {
       const res = await api.leads.fetchEnrichmentDetails(idsToFetch);
       toast({
-        title: (
-          <span className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-success flex-shrink-0" />
-            Fetching complete
-          </span>
-        ),
+        title: "Fetching complete",
         description: `Found details for ${res.updated} lead${res.updated === 1 ? "" : "s"}.${res.skipped > 0 || res.failed > 0 ? ` (${res.skipped} skipped, ${res.failed} failed)` : ""}`,
       });
       await fetchEnrichmentLeads();
@@ -1062,6 +1056,11 @@ function normalizeCategoryForFilter(category: string): string {
 
   const c = raw.toLowerCase().trim();
 
+  // Client wants only Diamond + Jewellery categories in the filter chips.
+  // Hide categories like "Gemologist" and "Wholesale Jewelry/Wholesaler".
+  if (c.includes("gemologist")) return "";
+  if (c.includes("wholesale") || c.includes("wholesaler")) return "";
+
   // Keep categories separate (so "Jewelry Store" and "Jewelry Manufacturer" show as chips),
   // but normalize misspellings/variants to consistent labels.
   if (c === "jewelery store" || c === "jewellery store" || c === "jewelry store") return "Jewelry Store";
@@ -1069,7 +1068,20 @@ function normalizeCategoryForFilter(category: string): string {
   if (c === "jewelery manufacturer" || c === "jewellery manufacturer" || c === "jewelry manufacturer")
     return "Jewelry Manufacturer";
 
-  return raw;
+  // Allow-list: only show these categories in UI (chips + results filtering).
+  const normalized = raw;
+  const allowed = new Set([
+    "Jewelry Manufacturer",
+    "Diamond Merchant",
+    "Manufacturer",
+    "E-commerce Service",
+    "Jewelry Store",
+    "Jeweler",
+    "Jewellery",
+    "Diamond Buyer",
+    "Diamond Dealer",
+  ]);
+  return allowed.has(normalized) ? normalized : "";
 }
 
 /** Check if lead matches category filter (normalized labels). */
@@ -1927,7 +1939,8 @@ function ResultsView({
   }, [chainStores]);
 
   const displayedLeads = useMemo(() => {
-    let filtered = leads;
+    // Always hide leads outside the allowed category set (normalizeCategoryForFilter returns "" for them).
+    let filtered = leads.filter((l) => !!normalizeCategoryForFilter(l.category ?? ""));
     if (categoryFilters.size > 0) {
       filtered = filtered.filter((l) => {
         const norm = normalizeCategoryForFilter(l.category ?? "");

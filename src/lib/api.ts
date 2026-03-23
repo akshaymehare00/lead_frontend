@@ -7,7 +7,7 @@
 //   import.meta.env.VITE_API_URL ||
 //   (import.meta.env.PROD ? "https://lead-backend-1-kcve.onrender.com" : "http://localhost:3000");
 const API_BASE = "https://lead-backend-exp.onrender.com"; 
-// const API_BASE = "http://localhost:3000";
+// const API_BASE = "http://65.2.186.122:3000";
 
 const TOKEN_KEY = "lead-compass-token";
 
@@ -440,6 +440,30 @@ export interface StatsResponse {
   };
 }
 
+export interface LeadsListCategoryFacet {
+  name: string;
+  count: number;
+}
+
+/** GET /api/v1/leads — paginated, server-side search & filters */
+export interface LeadsListResponse {
+  leads: LeadResponse[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  categories: LeadsListCategoryFacet[];
+}
+
+export interface LeadsListParams {
+  filter?: "all" | "enriched" | "pending";
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  ratingMin?: number;
+  categories?: string[];
+}
+
 // ─── API ───
 
 export const api = {
@@ -537,14 +561,18 @@ export const api = {
   },
 
   leads: {
-    list: (params?: { filter?: "all" | "enriched" | "pending"; limit?: number }) => {
+    list: (params?: LeadsListParams) => {
       const q = new URLSearchParams();
       if (params?.filter) q.set("filter", params.filter);
-      if (params?.limit) q.set("limit", String(params.limit));
+      if (params?.page != null) q.set("page", String(params.page));
+      if (params?.pageSize != null) q.set("pageSize", String(params.pageSize));
+      if (params?.search?.trim()) q.set("search", params.search.trim());
+      if (params?.ratingMin != null && Number.isFinite(params.ratingMin)) {
+        q.set("ratingMin", String(params.ratingMin));
+      }
+      if (params?.categories?.length) q.set("categories", params.categories.join(","));
       const query = q.toString();
-      return request<{ leads: LeadResponse[] }>(
-        `/api/v1/leads${query ? `?${query}` : ""}`
-      );
+      return request<LeadsListResponse>(`/api/v1/leads${query ? `?${query}` : ""}`);
     },
     get: (leadId: string) => request<LeadResponse>(`/api/v1/leads/${leadId}`),
     /** Remove a single lead (DELETE) */

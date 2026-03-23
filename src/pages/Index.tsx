@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { Sidebar, ChatSession } from "@/components/leads/Sidebar";
 import { useAuth } from "@/context/AuthContext";
@@ -25,6 +25,44 @@ import { cn } from "@/lib/utils";
 import { generateLeadsCsv, generateFullLeadsCsv, downloadCsv } from "@/lib/csv-export";
 
 type ViewMode = "dashboard" | "results" | "crm-check" | "enrichment" | "leads-total" | "leads-enriched" | "leads-pending";
+
+type LeadsListFilter = "all" | "enriched" | "pending";
+
+export type LeadsListQueryState = {
+  filter: LeadsListFilter;
+  page: number;
+  pageSize: number;
+  search: string;
+  ratingMin?: number;
+  categories: string[];
+};
+
+function defaultLeadsListQuery(filter: LeadsListFilter): LeadsListQueryState {
+  return {
+    filter,
+    page: 1,
+    pageSize: 30,
+    search: "",
+    ratingMin: undefined,
+    categories: [],
+  };
+}
+
+function mergeLeadsListQuery(
+  prev: LeadsListQueryState,
+  partial: Partial<LeadsListQueryState>
+): LeadsListQueryState {
+  const next = { ...prev, ...partial };
+  const resetPage =
+    partial.page === undefined &&
+    (partial.search !== undefined ||
+      partial.ratingMin !== undefined ||
+      partial.categories !== undefined ||
+      partial.pageSize !== undefined ||
+      (partial.filter !== undefined && partial.filter !== prev.filter));
+  if (resetPage) next.page = 1;
+  return next;
+}
 
 export interface CrmCheckLead extends Lead {
   crmStatus?: string;
@@ -69,8 +107,17 @@ export default function Index() {
   const [fetchedEnrichmentLeadIds, setFetchedEnrichmentLeadIds] = useState<Set<string>>(new Set());
   const [isLoadingCrmCheck, setIsLoadingCrmCheck] = useState(false);
   const [leadsListData, setLeadsListData] = useState<Lead[]>([]);
-  const [leadsListFilter, setLeadsListFilter] = useState<"all" | "enriched" | "pending">("all");
+  const [leadsListQuery, setLeadsListQuery] = useState<LeadsListQueryState>(() =>
+    defaultLeadsListQuery("all")
+  );
+  const [leadsListTotal, setLeadsListTotal] = useState(0);
+  const [leadsListTotalPages, setLeadsListTotalPages] = useState(1);
+  const [leadsListCategoryFacets, setLeadsListCategoryFacets] = useState<
+    { name: string; count: number }[]
+  >([]);
   const [isLoadingLeadsList, setIsLoadingLeadsList] = useState(false);
+  const leadsListQueryRef = useRef(leadsListQuery);
+  leadsListQueryRef.current = leadsListQuery;
   const [isSavingAndCheckDuplicate, setIsSavingAndCheckDuplicate] = useState(false);
   const [chainStores, setChainStores] = useState<ChainStoreGroup[]>([]);
 
@@ -497,47 +544,61 @@ export default function Index() {
     });
   };
 
-  const fetchLeadsList = useCallback(async (filter: "all" | "enriched" | "pending") => {
-    setIsLoadingLeadsList(true);
-    setLeadsListFilter(filter);
-    try {
-      const res = await api.leads.list({ filter, limit: 1000 });
-      setLeadsListData((res.leads ?? []).map(toLead));
-    } catch {
+  const fetchLeadsList = useCallback(
+    async (q: LeadsListQueryState) => {
+      setIsLoadingLeadsList(true);
       try {
-        const { sessions: list } = await api.sessions.list(50, 0);
-        const allLeads: Lead[] = [];
-        const seen = new Set<string>();
-        for (const s of list) {
-          const session = await api.sessions.get(s.id);
-          for (const lr of session.leads ?? []) {
-            if (seen.has(lr.id)) continue;
-            seen.add(lr.id);
-            const lead = toLead(lr);
-            if (filter === "enriched" && !lead.email && !lead.linkedin && !lead.instagram) continue;
-            if (filter === "pending" && (lead.email || lead.linkedin || lead.instagram)) continue;
-            allLeads.push(lead);
-          }
-        }
-        if (filter === "enriched") {
-          setLeadsListData(allLeads.filter((l) => l.email || l.linkedin || l.instagram));
-        } else if (filter === "pending") {
-          setLeadsListData(allLeads.filter((l) => !l.email && !l.linkedin && !l.instagram));
-        } else {
-          setLeadsListData(allLeads);
-        }
+        const res = await api.leads.list({
+          filter: q.filter,
+          page: q.page,
+          pageSize: q.pageSize,
+          search: q.search || undefined,
+          ratingMin: q.ratingMin,
+          categories: q.categories.length ? q.categories : undefined,
+        });
+        setLeadsListQuery({
+          ...q,
+          page: res.page,
+          pageSize: res.pageSize,
+        });
+        leadsListQueryRef.current = {
+          ...q,
+          page: res.page,
+          pageSize: res.pageSize,
+        };
+        setLeadsListData((res.leads ?? []).map(toLead));
+        setLeadsListTotal(res.total);
+        setLeadsListTotalPages(Math.max(1, res.totalPages));
+        setLeadsListCategoryFacets(res.categories ?? []);
       } catch (err) {
+        toast({
+          title: "Failed to load leads",
+          description: err instanceof Error ? err.message : "Could not fetch from server",
+          variant: "destructive",
+        });
         setLeadsListData([]);
+        setLeadsListTotal(0);
+        setLeadsListTotalPages(1);
+        setLeadsListCategoryFacets([]);
+      } finally {
+        setIsLoadingLeadsList(false);
       }
-    } finally {
-      setIsLoadingLeadsList(false);
-    }
-  }, []);
+    },
+    [toast]
+  );
+
+  const applyLeadsListQueryChange = useCallback(
+    (partial: Partial<LeadsListQueryState>) => {
+      const next = mergeLeadsListQuery(leadsListQueryRef.current, partial);
+      void fetchLeadsList(next);
+    },
+    [fetchLeadsList]
+  );
 
   const navigateToLeadsList = (statKey: "totalLeads" | "enriched" | "pendingReview") => {
     const filter = statKey === "totalLeads" ? "all" : statKey === "enriched" ? "enriched" : "pending";
     setViewMode(filter === "all" ? "leads-total" : filter === "enriched" ? "leads-enriched" : "leads-pending");
-    fetchLeadsList(filter);
+    void fetchLeadsList(defaultLeadsListQuery(filter));
   };
 
   const toggleCrmCheckLead = (id: string) => {
@@ -952,11 +1013,16 @@ export default function Index() {
               />
             ) : viewMode === "leads-total" || viewMode === "leads-enriched" || viewMode === "leads-pending" ? (
               <LeadsListView
+                key={leadsListQuery.filter}
                 leads={leadsListData}
-                filter={leadsListFilter}
+                query={leadsListQuery}
+                total={leadsListTotal}
+                totalPages={leadsListTotalPages}
+                categoryFacets={leadsListCategoryFacets}
                 isLoading={isLoadingLeadsList}
                 onBack={() => setViewMode("dashboard")}
                 onViewLead={setActiveLead}
+                onQueryChange={applyLeadsListQueryChange}
               />
             ) : viewMode === "enrichment" ? (
               <EnrichmentView
@@ -1489,40 +1555,66 @@ function CrmCheckView({
   );
 }
 
-/* ─── Leads List View (Total / Enriched / Pending with filters) ─── */
+/* ─── Leads List View (Total / Enriched / Pending — server search & pagination) ─── */
 function LeadsListView({
   leads,
-  filter,
+  query,
+  total,
+  totalPages,
+  categoryFacets,
   isLoading,
   onBack,
   onViewLead,
+  onQueryChange,
 }: {
   leads: Lead[];
-  filter: "all" | "enriched" | "pending";
+  query: LeadsListQueryState;
+  total: number;
+  totalPages: number;
+  categoryFacets: { name: string; count: number }[];
   isLoading: boolean;
   onBack: () => void;
   onViewLead: (lead: Lead) => void;
+  onQueryChange: (partial: Partial<LeadsListQueryState>) => void;
 }) {
-  const [ratingMin, setRatingMin] = useState<number | "">("");
-  const [cityFilter, setCityFilter] = useState("");
-  const [categoriesFilter, setCategoriesFilter] = useState<Set<string>>(new Set());
+  const [searchDraft, setSearchDraft] = useState(query.search);
+  const skipNextSearchDebounce = useRef(true);
 
-  const categories = useMemo(() => {
-    const set = new Set<string>();
-    leads.forEach((l) => l.category && set.add(l.category));
-    return Array.from(set).sort();
-  }, [leads]);
+  useEffect(() => {
+    setSearchDraft(query.search);
+    skipNextSearchDebounce.current = true;
+  }, [query.search, query.filter]);
 
-  const filteredLeads = useMemo(() => {
-    return leads.filter((l) => {
-      if (ratingMin !== "" && (l.rating ?? 0) < ratingMin) return false;
-      if (cityFilter.trim() && !(l.address ?? "").toLowerCase().includes(cityFilter.trim().toLowerCase())) return false;
-      if (categoriesFilter.size > 0 && !categoriesFilter.has(l.category)) return false;
-      return true;
-    });
-  }, [leads, ratingMin, cityFilter, categoriesFilter]);
+  useEffect(() => {
+    if (skipNextSearchDebounce.current) {
+      skipNextSearchDebounce.current = false;
+      return;
+    }
+    const id = setTimeout(() => {
+      if (searchDraft !== query.search) {
+        onQueryChange({ search: searchDraft });
+      }
+    }, 400);
+    return () => clearTimeout(id);
+  }, [searchDraft, query.search, onQueryChange]);
 
-  const title = filter === "all" ? "Total Leads" : filter === "enriched" ? "Enriched" : "Pending Review";
+  const title =
+    query.filter === "all"
+      ? "Total Leads"
+      : query.filter === "enriched"
+        ? "Enriched"
+        : "Pending Review";
+
+  const { page, pageSize } = query;
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
+
+  const categoryOptions = useMemo(
+    () => [...categoryFacets].sort((a, b) => a.name.localeCompare(b.name)),
+    [categoryFacets]
+  );
+
+  const selectedCategories = useMemo(() => new Set(query.categories), [query.categories]);
 
   return (
     <div className="p-6 max-w-5xl mx-auto animate-slide-up">
@@ -1534,55 +1626,82 @@ function LeadsListView({
         <h1 className="text-lg font-semibold">{title}</h1>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-4 mb-6 p-4 rounded-xl border border-border bg-card">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">Rating:</span>
-          <select
-            value={ratingMin === "" ? "" : ratingMin}
-            onChange={(e) => setRatingMin(e.target.value === "" ? "" : Number(e.target.value))}
-            className="h-8 px-3 rounded-md border border-input bg-background text-sm"
-          >
-            <option value="">All</option>
-            <option value={3}>3+</option>
-            <option value={3.5}>3.5+</option>
-            <option value={4}>4+</option>
-            <option value={4.5}>4.5+</option>
-          </select>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-muted-foreground">City:</span>
-          <input
-            type="text"
-            placeholder="Filter by city..."
-            value={cityFilter}
-            onChange={(e) => setCityFilter(e.target.value)}
-            className="h-8 px-3 rounded-md border border-input bg-background text-sm w-40"
-          />
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-medium text-muted-foreground">Category:</span>
-          {categories.map((c) => (
-            <button
-              key={c}
-              type="button"
-              onClick={() =>
-                setCategoriesFilter((prev) => {
-                  const next = new Set(prev);
-                  next.has(c) ? next.delete(c) : next.add(c);
-                  return next;
+      {/* Filters — all applied on the server */}
+      <div className="flex flex-col gap-4 mb-6 p-4 rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-2 min-w-[140px]">
+            <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Rating:</span>
+            <select
+              value={query.ratingMin ?? ""}
+              onChange={(e) =>
+                onQueryChange({
+                  ratingMin: e.target.value === "" ? undefined : Number(e.target.value),
                 })
               }
-              className={cn(
-                "text-xs px-2.5 py-1 rounded-full border transition-colors",
-                categoriesFilter.has(c)
-                  ? "bg-primary/15 border-primary/30 text-primary"
-                  : "bg-secondary/50 border-border text-muted-foreground hover:bg-secondary"
-              )}
+              disabled={isLoading}
+              className="h-8 px-3 rounded-md border border-input bg-background text-sm min-w-[5.5rem]"
             >
-              {c}
-            </button>
-          ))}
+              <option value="">All</option>
+              <option value={3}>3+</option>
+              <option value={3.5}>3.5+</option>
+              <option value={4}>4+</option>
+              <option value={4.5}>4.5+</option>
+            </select>
+          </div>
+          <div className="flex items-center gap-2 flex-1 min-w-[200px]">
+            <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Search:</span>
+            <input
+              type="search"
+              placeholder="Name, city, phone, email, website, category…"
+              value={searchDraft}
+              onChange={(e) => setSearchDraft(e.target.value)}
+              disabled={isLoading}
+              className="h-8 px-3 rounded-md border border-input bg-background text-sm flex-1 min-w-0 max-w-xl"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">Per page:</span>
+            <select
+              value={query.pageSize}
+              onChange={(e) => onQueryChange({ pageSize: Number(e.target.value) })}
+              disabled={isLoading}
+              className="h-8 px-3 rounded-md border border-input bg-background text-sm"
+            >
+              <option value={30}>30</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
+          </div>
+        </div>
+        <div className="flex items-start gap-2 flex-wrap">
+          <span className="text-xs font-medium text-muted-foreground pt-1.5">Category:</span>
+          <div className="flex flex-wrap gap-1.5">
+            {categoryOptions.length === 0 && !isLoading ? (
+              <span className="text-xs text-muted-foreground">No categories in this view</span>
+            ) : (
+              categoryOptions.map(({ name: c, count }) => (
+                <button
+                  key={c}
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => {
+                    const next = new Set(selectedCategories);
+                    next.has(c) ? next.delete(c) : next.add(c);
+                    onQueryChange({ categories: Array.from(next) });
+                  }}
+                  className={cn(
+                    "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                    selectedCategories.has(c)
+                      ? "bg-primary/15 border-primary/30 text-primary"
+                      : "bg-secondary/50 border-border text-muted-foreground hover:bg-secondary"
+                  )}
+                >
+                  {c}
+                  <span className="text-muted-foreground/80 ml-1">({count})</span>
+                </button>
+              ))
+            )}
+          </div>
         </div>
       </div>
 
@@ -1593,11 +1712,42 @@ function LeadsListView({
         </div>
       ) : (
         <>
-          <p className="text-xs text-muted-foreground mb-4">
-            {filteredLeads.length} of {leads.length} leads
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+            <p className="text-xs text-muted-foreground">
+              {total === 0
+                ? "No leads"
+                : `Showing ${rangeStart.toLocaleString()}–${rangeEnd.toLocaleString()} of ${total.toLocaleString()} leads`}
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                disabled={page <= 1 || isLoading}
+                onClick={() => onQueryChange({ page: page - 1 })}
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Prev
+              </Button>
+              <span className="text-xs text-muted-foreground tabular-nums px-2">
+                Page {page} / {totalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="gap-1"
+                disabled={page >= totalPages || isLoading}
+                onClick={() => onQueryChange({ page: page + 1 })}
+              >
+                Next
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
           <div className="grid grid-cols-2 xl:grid-cols-3 gap-4 items-stretch">
-            {filteredLeads.map((lead) => (
+            {leads.map((lead) => (
               <ClickableLeadCard
                 key={lead.id}
                 lead={lead}
@@ -1607,9 +1757,9 @@ function LeadsListView({
               />
             ))}
           </div>
-          {filteredLeads.length === 0 && (
+          {leads.length === 0 && (
             <div className="py-12 text-center rounded-xl border border-dashed border-border bg-muted/30">
-              <p className="text-sm text-muted-foreground">No leads match the filters</p>
+              <p className="text-sm text-muted-foreground">No leads match your filters</p>
             </div>
           )}
         </>
@@ -1863,6 +2013,10 @@ function DashboardView({
           <SearchPanel onSearch={onSearch} isSearching={isSearching} compact />
         </div>
       </div>
+
+      <section aria-label="Lead statistics">
+        <StatsBar onStatClick={onStatClick} />
+      </section>
 
     </div>
   );

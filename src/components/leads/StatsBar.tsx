@@ -1,13 +1,12 @@
 import { useEffect, useState } from "react";
-import { TrendingUp, Users, CheckCircle, Clock } from "lucide-react";
+import { Users, CheckCircle, Clock } from "lucide-react";
 import { api, type StatsResponse } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const STAT_CONFIG = [
   { key: "totalLeads" as const, label: "Total Leads", icon: Users, color: "text-primary", clickable: true },
-  // { key: "savedThisWeek" as const, label: "Saved This Week", icon: TrendingUp, color: "text-success", clickable: false },
   { key: "enriched" as const, label: "Enriched", icon: CheckCircle, color: "text-warning", clickable: true },
-  { key: "pendingReview" as const, label: "Not Enriched", icon: Clock, color: "text-destructive", clickable: true },
+  { key: "pendingReview" as const, label: "Pending Review", icon: Clock, color: "text-destructive", clickable: true },
 ];
 
 export const StatsBar = ({ onStatClick }: { onStatClick?: (key: "totalLeads" | "enriched" | "pendingReview") => void }) => {
@@ -31,8 +30,8 @@ export const StatsBar = ({ onStatClick }: { onStatClick?: (key: "totalLeads" | "
 
   if (!stats) {
     return (
-      <div className="grid grid-cols-4 gap-4">
-        {[1, 2, 3, 4].map((i) => (
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {[1, 2, 3].map((i) => (
           <div key={i} className="bg-card border border-border rounded-xl p-4 flex items-center gap-4 animate-pulse">
             <div className="w-10 h-10 rounded-lg bg-secondary/60" />
             <div className="space-y-2">
@@ -46,7 +45,7 @@ export const StatsBar = ({ onStatClick }: { onStatClick?: (key: "totalLeads" | "
   }
 
   return (
-    <div className="grid grid-cols-4 gap-4">
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
       {STAT_CONFIG.map(({ key, label, icon: Icon, color, clickable }) => {
         const value = stats[key];
         const change = stats.change[key];

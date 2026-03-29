@@ -278,10 +278,13 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
       {lead.duplicateOf && (
         <div className="mt-2 pt-2 border-t border-destructive/20 space-y-1 flex-shrink-0">
           <p className="text-[10px] font-semibold text-destructive uppercase tracking-wider">Duplicate of</p>
-          <p className="text-xs font-medium text-foreground">{lead.duplicateOf.name}</p>
-          {lead.duplicateOf.crmId && (
-            <p className="text-[10px] text-muted-foreground">CRM ID: {lead.duplicateOf.crmId}</p>
+          {lead.duplicateOf.id === "hk-crm" && (
+            <p className="text-[10px] text-muted-foreground">HK ERP contact</p>
           )}
+          <p className="text-xs font-medium text-foreground">{lead.duplicateOf.name}</p>
+          {lead.duplicateOf.crmId ? (
+            <p className="text-[10px] text-muted-foreground">CRM ID: {lead.duplicateOf.crmId}</p>
+          ) : null}
         </div>
       )}
 
@@ -296,6 +299,9 @@ export const LeadCard = ({ lead, selected, onToggle, companyColor, siblingLeads,
               <span className="font-medium text-foreground">{m.name}</span>
               {m.source === "duplicate_dummy" && (
                 <span className="ml-1 text-[10px] text-muted-foreground/70">(CRM)</span>
+              )}
+              {m.source === "hk_crm" && (
+                <span className="ml-1 text-[10px] text-sky-600 dark:text-sky-400">(HK CRM)</span>
               )}
               {m.score != null && (
                 <span className="ml-1 text-[10px] text-amber-600 dark:text-amber-400">{m.score}% match</span>

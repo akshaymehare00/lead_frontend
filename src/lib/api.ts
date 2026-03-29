@@ -1,13 +1,11 @@
 /**
  * Lead Compass API Client
- * Base URL: VITE_API_URL or http://localhost:3000
+ * Base URL: VITE_API_URL when set; else dev → http://localhost:3000, prod → Render default.
  */
 
-// const API_BASE =
-//   import.meta.env.VITE_API_URL ||
-//   (import.meta.env.PROD ? "https://lead-backend-1-kcve.onrender.com" : "http://localhost:3000");
-const API_BASE = "https://lead-backend-exp.onrender.com"; 
-// const API_BASE = "http://65.2.186.122:3000";
+const API_BASE =
+  import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? "http://localhost:3000" : "https://lead-backend-exp.onrender.com");
 
 const TOKEN_KEY = "lead-compass-token";
 
@@ -157,15 +155,43 @@ export interface SearchStartResponse {
   message: string;
 }
 
-/** CRM check match from session/API (same shape as CrmCheckSimilarMatch) */
+export type LeadCrmStatus =
+  | "NEW"
+  | "PENDING"
+  | "FOUND_SIMILAR"
+  | "DUPLICATE"
+  | "ALREADY_REACHED"
+  | "TRANSFER_REQUIRED"
+  | "SAVED"
+  | "SKIPPED";
+
+/** Duplicate / similar row source */
+export type MatchSource = "lead" | "duplicate_dummy" | "hk_crm";
+
+export interface HkCrmFieldMatch {
+  field: string;
+  givenValue: string;
+  isMatch: boolean;
+  status: string;
+}
+
+export interface HkCrmSearchData {
+  isOurCustomer: boolean;
+  status: string;
+  fieldMatches: HkCrmFieldMatch[];
+}
+
+/** CRM check match from session/API (stored JSON on lead) */
 export interface CrmCheckMatch {
   id: string;
-  source: "lead" | "duplicate_dummy";
+  source: MatchSource;
   name: string;
   score?: number;
   matchedFields: string[];
   reason: string;
   crmId?: string | null;
+  hkCrmMessage?: string;
+  hkCrmFieldMatches?: HkCrmFieldMatch[];
 }
 
 export interface LeadResponse {
@@ -187,7 +213,7 @@ export interface LeadResponse {
   currentStep: number;
   enrichmentStatus: string;
   enrichmentSources?: { source: string; done: boolean }[];
-  duplicateOf: { id: string; name: string; crmId: string } | null;
+  duplicateOf: { id: string; name: string; crmId: string | null } | null;
   searchSessionId: string;
   createdAt: string;
   updatedAt: string;
@@ -262,45 +288,79 @@ export interface SessionDetailResponse extends SessionListItem {
   leads: LeadResponse[];
 }
 
-/** POST /api/v1/leads/:leadId/crm-check — Request body (all optional) */
+/** POST /api/v1/leads/:leadId/crm-check — Request body (optional overrides) */
 export interface CrmCheckRequestBody {
   phone?: string;
   website?: string;
   email?: string;
   name?: string;
   address?: string;
-  category?: string;
   contactPerson?: string;
+  /** Extra field some backends still accept */
+  category?: string;
 }
 
-/** Similar match item in CRM check response */
+/** Similar match item in CRM check / bulk response */
 export interface CrmCheckSimilarMatch {
   id: string;
-  source: "lead" | "duplicate_dummy";
+  source: MatchSource;
   name: string;
   score: number;
   matchedFields: string[];
   reason: string;
+  crmId?: string | null;
+}
+
+export interface DuplicateOfRef {
+  id: string;
+  name: string;
+  crmId: string | null;
 }
 
 /** POST /api/v1/leads/:leadId/crm-check — Response */
 export interface CrmCheckResponse {
   leadId: string;
-  crmStatus: "NEW" | "DUPLICATE";
+  crmStatus: LeadCrmStatus;
   message: string;
-  duplicateOf: {
-    id: string;
-    name: string;
-    crmId: string | null;
-  } | null;
+  duplicateOf: DuplicateOfRef | null;
   similarMatches?: CrmCheckSimilarMatch[];
   aiUsed?: boolean;
+  hkCrmError?: string | null;
+  hkCrm?: {
+    message: string;
+    isOurCustomer: boolean;
+    status: string;
+  };
+}
+
+/** POST /api/v1/crm/contact-search — Body (at least one field non-empty) */
+export interface CrmContactSearchBody {
+  companyName?: string;
+  mobileNo?: string;
+  email?: string;
+  website?: string;
+  street?: string;
+  cityName?: string;
+  stateName?: string;
+  zipCode?: string;
+  countryName?: string;
+}
+
+/** POST /api/v1/crm/contact-search — Success (HK proxy) */
+export interface CrmContactSearchResponse {
+  success: boolean;
+  message: string;
+  errorCode: string | null;
+  isOurCustomer: boolean;
+  status: string;
+  fieldMatches: HkCrmFieldMatch[];
+  data: HkCrmSearchData | null;
 }
 
 /** GET /api/v1/leads/:leadId/duplicate-check — Match item */
 export interface DuplicateCheckMatch {
   id: string;
-  source: "lead" | "duplicate_dummy";
+  source: MatchSource;
   name: string;
   category: string | null;
   address: string;
@@ -314,11 +374,28 @@ export interface DuplicateCheckMatch {
   reason: string;
 }
 
-/** GET /api/v1/leads/:leadId/duplicate-check — Response (preview only, no status update) */
+/** GET /api/v1/leads/:leadId/duplicate-check — Preview (no DB write) */
 export interface DuplicateCheckResponse {
   direct: DuplicateCheckMatch | null;
   similar: DuplicateCheckMatch[];
   aiUsed: boolean;
+  hkCrmError?: string | null;
+  hkCrm?: {
+    message: string;
+    data: HkCrmSearchData;
+  };
+}
+
+/** POST /api/v1/leads/:leadId/confirm-proceed — Body */
+export interface ConfirmProceedBody {
+  similar?: Array<{
+    id: string;
+    source: MatchSource;
+    name: string;
+    score: number;
+    matchedFields: string[];
+    reason: string;
+  }>;
 }
 
 /** DELETE /api/v1/leads/:leadId — Success response */
@@ -365,6 +442,7 @@ export interface FetchEnrichmentDetailsResponse {
     leadId: string;
     status: "UPDATED" | "SKIPPED" | "FAILED";
     reason?: string;
+    error?: string;
     fetched?: {
       phone?: string;
       email?: string;
@@ -390,15 +468,17 @@ export interface BulkCrmCheckRequest {
   leadIds: string[];
 }
 
-/** POST /api/v1/leads/bulk-crm-check — Success item */
+/** POST /api/v1/leads/bulk-crm-check — Success item (same fields as CrmCheckResponse + status) */
 export interface BulkCrmCheckOkItem {
   status: "OK";
   leadId: string;
-  crmStatus: "NEW" | "FOUND_SIMILAR" | "DUPLICATE";
+  crmStatus: LeadCrmStatus;
   message: string;
-  duplicateOf: { id: string; name: string; crmId: string | null } | null;
+  duplicateOf: DuplicateOfRef | null;
   similarMatches?: CrmCheckSimilarMatch[];
   aiUsed?: boolean;
+  hkCrmError?: string | null;
+  hkCrm?: CrmCheckResponse["hkCrm"];
 }
 
 /** POST /api/v1/leads/bulk-crm-check — Failure item */
@@ -560,6 +640,15 @@ export const api = {
       }),
   },
 
+  /** HK CRM proxy + CRM helpers (no lead id required for contact-search) */
+  crm: {
+    contactSearch: (body: CrmContactSearchBody) =>
+      request<CrmContactSearchResponse>("/api/v1/crm/contact-search", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+  },
+
   leads: {
     list: (params?: LeadsListParams) => {
       const q = new URLSearchParams();
@@ -616,10 +705,11 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ leadIds }),
       }),
-    /** Confirm proceed — persist "proceed for enrichment" when user confirmed after GET preview */
-    confirmProceed: (leadId: string) =>
-      request<{ leadId: string; crmStatus: string }>(`/api/v1/leads/${leadId}/confirm-proceed`, {
+    /** After GET duplicate-check preview — persist NEW / FOUND_SIMILAR so refresh does not re-run HK */
+    confirmProceed: (leadId: string, body?: ConfirmProceedBody) =>
+      request<CrmCheckResponse>(`/api/v1/leads/${leadId}/confirm-proceed`, {
         method: "POST",
+        body: JSON.stringify(body ?? {}),
       }),
     updateStatus: (leadId: string, crmStatus: string) =>
       request<{ leadId: string; crmStatus: string }>(`/api/v1/leads/${leadId}/status`, {
@@ -683,12 +773,18 @@ export const api = {
 // ─── Helpers ───
 
 /** Convert API LeadResponse to frontend Lead shape */
+/** Map API duplicate ref to UI shape (null crmId → empty string). */
+export function duplicateOfToUi(d: DuplicateOfRef | null | undefined) {
+  if (!d) return undefined;
+  return { id: d.id, name: d.name, crmId: d.crmId ?? "" };
+}
+
 export function toLead(lead: LeadResponse) {
   const crmCheckedAt = lead.crmCheckedAt ?? null;
   const checkedAt = crmCheckedAt ? (Date.parse(crmCheckedAt) || undefined) : undefined;
   const similarMatches = (lead.crmCheckMatches ?? []).map((m) => ({
     id: m.id,
-    source: m.source as "lead" | "duplicate_dummy",
+    source: m.source as MatchSource,
     name: m.name,
     score: m.score ?? 0,
     matchedFields: m.matchedFields ?? [],
@@ -706,7 +802,7 @@ export function toLead(lead: LeadResponse) {
     hours: lead.hours ?? undefined,
     isNew: (!!lead.crmCheckedAt || lead.crmStatus === "SAVED") ? false : (lead.isNew ?? undefined),
     crmStatus: lead.crmStatus === "SAVED" ? "NEW" : lead.crmStatus,
-    duplicateOf: lead.duplicateOf ?? undefined,
+    duplicateOf: duplicateOfToUi(lead.duplicateOf),
     email: lead.email ?? undefined,
     linkedin: lead.linkedin ?? undefined,
     instagram: lead.instagram ?? undefined,

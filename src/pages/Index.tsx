@@ -20,7 +20,14 @@ import {
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { api, toLead, type CrmCheckSimilarMatch, type BulkCrmCheckOkItem, type ChainStoreGroup } from "@/lib/api";
+import {
+  api,
+  toLead,
+  duplicateOfToUi,
+  type CrmCheckSimilarMatch,
+  type BulkCrmCheckOkItem,
+  type ChainStoreGroup,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { generateLeadsCsv, generateFullLeadsCsv, downloadCsv } from "@/lib/csv-export";
 
@@ -71,6 +78,10 @@ export interface CrmCheckLead extends Lead {
   similarMatches?: CrmCheckSimilarMatch[];
   isChecking?: boolean;
   checkedAt?: number;
+  /** HK CRM summary when server ran contact search as part of CRM check */
+  hkCrm?: { message: string; isOurCustomer: boolean; status: string };
+  /** HK failed; local-only matching was used */
+  hkCrmError?: string;
 }
 
 const POLL_INTERVAL = 1500;
@@ -520,9 +531,51 @@ export default function Index() {
     setIsFetchingEnrichment(true);
     try {
       const res = await api.leads.fetchEnrichmentDetails(idsToFetch);
+
+      const countByReason = (items: { reason?: string; error?: string }[], fallback: string) => {
+        const buckets = new Map<string, number>();
+        for (const item of items) {
+          const text = (item.reason ?? item.error ?? fallback).trim() || fallback;
+          buckets.set(text, (buckets.get(text) ?? 0) + 1);
+        }
+        return [...buckets.entries()]
+          .map(([text, n]) => (n > 1 ? `${n}× ${text}` : text))
+          .join("; ");
+      };
+
+      const skippedRows = res.results.filter((r) => r.status === "SKIPPED");
+      const failedRows = res.results.filter((r) => r.status === "FAILED");
+      const skipDetail =
+        skippedRows.length > 0
+          ? countByReason(skippedRows, "Unknown reason")
+          : "";
+      const failDetail =
+        failedRows.length > 0
+          ? countByReason(failedRows, "Unknown error")
+          : "";
+
+      const descParts: string[] = [];
+      descParts.push(
+        `${res.updated} lead${res.updated === 1 ? "" : "s"} updated, ${res.processed} processed.`
+      );
+      if (res.skipped > 0) {
+        descParts.push(
+          skipDetail
+            ? `${res.skipped} skipped: ${skipDetail}`
+            : `${res.skipped} skipped.`
+        );
+      }
+      if (res.failed > 0) {
+        descParts.push(
+          failDetail
+            ? `${res.failed} failed: ${failDetail}`
+            : `${res.failed} failed.`
+        );
+      }
+
       toast({
         title: "Fetching complete",
-        description: `Found details for ${res.updated} lead${res.updated === 1 ? "" : "s"}.${res.skipped > 0 || res.failed > 0 ? ` (${res.skipped} skipped, ${res.failed} failed)` : ""}`,
+        description: descParts.join(" "),
       });
       await fetchEnrichmentLeads();
     } catch (err) {
@@ -686,17 +739,28 @@ export default function Index() {
                 ...l,
                 crmStatus: res.crmStatus,
                 checkMessage: res.message,
-                duplicateOf: res.duplicateOf ?? undefined,
+                duplicateOf: duplicateOfToUi(res.duplicateOf),
                 similarMatches: res.similarMatches ?? [],
+                hkCrm: res.hkCrm,
+                hkCrmError: res.hkCrmError ?? undefined,
                 isChecking: false,
                 checkedAt: Date.now(),
               }
             : l
         )
       );
+      const toastTitle =
+        res.crmStatus === "DUPLICATE"
+          ? "Duplicate found"
+          : res.crmStatus === "FOUND_SIMILAR"
+            ? "Similar leads found"
+            : "New lead";
       toast({
-        title: res.crmStatus === "NEW" ? "New lead" : "Duplicate found",
-        description: res.message,
+        title: toastTitle,
+        description:
+          res.hkCrmError && res.crmStatus === "NEW"
+            ? `${res.message} (HK CRM: ${res.hkCrmError})`
+            : res.message,
       });
     } catch (err) {
       setCrmCheckLeads((prev) =>
@@ -744,8 +808,10 @@ export default function Index() {
               ...l,
               crmStatus: r.crmStatus,
               checkMessage: r.message,
-              duplicateOf: r.duplicateOf ?? undefined,
+              duplicateOf: duplicateOfToUi(r.duplicateOf),
               similarMatches: r.similarMatches ?? [],
+              hkCrm: r.hkCrm,
+              hkCrmError: r.hkCrmError ?? undefined,
               isChecking: true,
               checkedAt: Date.now(),
             };
@@ -1440,7 +1506,11 @@ function CrmCheckView({
             <>
               <DialogHeader>
                 <DialogTitle>
-                  {duplicateSimilarLead.duplicateOf ? "Duplicate Found" : "Similar Leads Found"}
+                  {duplicateSimilarLead.duplicateOf
+                    ? duplicateSimilarLead.duplicateOf.id === "hk-crm"
+                      ? "Duplicate Found (HK CRM)"
+                      : "Duplicate Found"
+                    : "Similar Leads Found"}
                 </DialogTitle>
               </DialogHeader>
               <div className="flex-1 overflow-y-auto space-y-4 pr-2">
@@ -1460,15 +1530,26 @@ function CrmCheckView({
                   {duplicateSimilarLead.checkMessage && (
                     <p className="mt-2 text-xs text-muted-foreground">{duplicateSimilarLead.checkMessage}</p>
                   )}
+                  {duplicateSimilarLead.hkCrmError && (
+                    <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                      HK CRM unavailable — local match only: {duplicateSimilarLead.hkCrmError}
+                    </p>
+                  )}
                 </div>
 
                 {/* Duplicate of */}
                 {duplicateSimilarLead.duplicateOf && (
                   <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/20">
                     <p className="text-xs font-semibold text-destructive uppercase tracking-wider mb-2">Duplicate of</p>
+                    {duplicateSimilarLead.duplicateOf.id === "hk-crm" && (
+                      <p className="text-[10px] font-medium text-muted-foreground mb-1">HK ERP contact database</p>
+                    )}
                     <h4 className="font-semibold text-foreground">{duplicateSimilarLead.duplicateOf.name}</h4>
-                    {duplicateSimilarLead.duplicateOf.crmId && (
+                    {duplicateSimilarLead.duplicateOf.crmId ? (
                       <p className="mt-1 text-xs text-muted-foreground">CRM ID: {duplicateSimilarLead.duplicateOf.crmId}</p>
+                    ) : null}
+                    {duplicateSimilarLead.hkCrm && (
+                      <p className="mt-2 text-xs text-muted-foreground">{duplicateSimilarLead.hkCrm.message}</p>
                     )}
                   </div>
                 )}
@@ -1494,6 +1575,11 @@ function CrmCheckView({
                               {m.source === "duplicate_dummy" && (
                                 <span className="ml-1 text-[10px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                                   CRM record
+                                </span>
+                              )}
+                              {m.source === "hk_crm" && (
+                                <span className="ml-1 text-[10px] px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                                  HK CRM
                                 </span>
                               )}
                             </div>
